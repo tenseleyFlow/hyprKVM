@@ -361,7 +361,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     loop {
         tokio::select! {
             // Check for edge events, grabber events, and poll peer messages
-            _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+            _ = tokio::time::sleep(std::time::Duration::from_micros(500)) => {
                 // Forward grabbed input to remote peer
                 if let Some(cap_dir) = capture_direction {
                     let mut should_escape = false;
