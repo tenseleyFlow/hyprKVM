@@ -607,6 +607,14 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     peers.keys().cloned().collect()
                 };
 
+                // Debug: log state and peers occasionally
+                static POLL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let count = POLL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if count % 500 == 0 {
+                    let state = transfer_manager.state().await;
+                    tracing::info!("Poll #{}: state={:?}, peers={:?}", count, state, directions);
+                }
+
                 for direction in directions {
                     let mut peers = peers.write().await;
                     if let Some(peer) = peers.get_mut(&direction) {
