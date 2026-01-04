@@ -8,7 +8,7 @@
 
 use clap::{Parser, Subcommand};
 use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod hyprland;
@@ -95,17 +95,43 @@ enum ConfigAction {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Set up logging
+    // Set up logging with dual output (stderr + file)
     let log_level = match cli.verbose {
         0 => Level::INFO,
         1 => Level::DEBUG,
         _ => Level::TRACE,
     };
 
-    FmtSubscriber::builder()
-        .with_max_level(log_level)
-        .with_target(false)
-        .init();
+    // Create log directory
+    let log_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join("hyprkvm");
+    std::fs::create_dir_all(&log_dir).ok();
+
+    // File appender with daily rotation
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "daemon.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // Build subscriber with both stderr and file layers
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_writer(std::io::stderr)
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(true)
+                .with_ansi(false)
+                .with_writer(non_blocking)
+        )
+        .with(
+            tracing_subscriber::filter::LevelFilter::from_level(log_level)
+        );
+    subscriber.init();
+
+    // Keep the guard alive for the duration of the program
+    // (it's moved into the async context below)
 
     // Load configuration
     let config_path = cli.config.unwrap_or_else(|| {
@@ -686,14 +712,18 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     .map(|c| (c.x, c.y))
                                     .unwrap_or((0, 0));
 
-                                info!("RECOVERY HOTKEY: At edge with peer, initiating transfer to {:?}", direction);
-                                if let Err(e) = transfer_manager.initiate_transfer(
-                                    direction,
-                                    cursor_pos,
-                                    screen_height,
-                                    screen_width,
-                                ).await {
-                                    tracing::error!("Failed to initiate transfer from recovery hotkey: {}", e);
+                                if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                                    info!("RECOVERY HOTKEY: Barrier enabled, blocking transfer");
+                                } else {
+                                    info!("RECOVERY HOTKEY: At edge with peer, initiating transfer to {:?}", direction);
+                                    if let Err(e) = transfer_manager.initiate_transfer(
+                                        direction,
+                                        cursor_pos,
+                                        screen_height,
+                                        screen_width,
+                                    ).await {
+                                        tracing::error!("Failed to initiate transfer from recovery hotkey: {}", e);
+                                    }
                                 }
                             } else if !at_edge {
                                 // Not at edge - need to do movefocus ourselves because libinput
@@ -755,20 +785,29 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             }
                         }
 
-                        info!(
-                            "EDGE: {:?} at ({}, {}) - initiating transfer",
-                            direction,
-                            edge_event.position.0,
-                            edge_event.position.1
-                        );
+                        if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                            info!(
+                                "EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
+                                direction,
+                                edge_event.position.0,
+                                edge_event.position.1
+                            );
+                        } else {
+                            info!(
+                                "EDGE: {:?} at ({}, {}) - initiating transfer",
+                                direction,
+                                edge_event.position.0,
+                                edge_event.position.1
+                            );
 
-                        if let Err(e) = transfer_manager.initiate_transfer(
-                            direction,
-                            edge_event.position,
-                            screen_height,
-                            screen_width,
-                        ).await {
-                            tracing::warn!("Failed to initiate transfer: {}", e);
+                            if let Err(e) = transfer_manager.initiate_transfer(
+                                direction,
+                                edge_event.position,
+                                screen_height,
+                                screen_width,
+                            ).await {
+                                tracing::warn!("Failed to initiate transfer: {}", e);
+                            }
                         }
                     } else {
                         tracing::debug!(
@@ -852,18 +891,25 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                         }
                                                     }
 
-                                                    info!(
-                                                        "CURSOR EDGE: {:?} at ({}, {}) - initiating transfer",
-                                                        edge_dir, cx, cy
-                                                    );
+                                                    if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                                                        info!(
+                                                            "CURSOR EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
+                                                            edge_dir, cx, cy
+                                                        );
+                                                    } else {
+                                                        info!(
+                                                            "CURSOR EDGE: {:?} at ({}, {}) - initiating transfer",
+                                                            edge_dir, cx, cy
+                                                        );
 
-                                                    if let Err(e) = transfer_manager.initiate_transfer(
-                                                        edge_dir,
-                                                        (cx, cy),
-                                                        screen_height,
-                                                        screen_width,
-                                                    ).await {
-                                                        tracing::warn!("Failed to initiate transfer: {}", e);
+                                                        if let Err(e) = transfer_manager.initiate_transfer(
+                                                            edge_dir,
+                                                            (cx, cy),
+                                                            screen_height,
+                                                            screen_width,
+                                                        ).await {
+                                                            tracing::warn!("Failed to initiate transfer: {}", e);
+                                                        }
                                                     }
                                                 } else {
                                                     tracing::debug!(
@@ -1295,6 +1341,31 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     }
                                 } else {
                                     // At edge with peer but received control from different direction
+                                    if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                                        IpcResponse::Error { message: "Barrier enabled".to_string() }
+                                    } else {
+                                        // Initiate new transfer
+                                        let cursor_pos = hypr_client.cursor_pos().await
+                                            .map(|c| (c.x, c.y))
+                                            .unwrap_or((0, 0));
+
+                                        if let Err(e) = transfer_manager.initiate_transfer(
+                                            direction,
+                                            cursor_pos,
+                                            screen_height,
+                                            screen_width,
+                                        ).await {
+                                            IpcResponse::Error { message: format!("Transfer failed: {}", e) }
+                                        } else {
+                                            IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Not in ReceivedControl - check barrier
+                                if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                                    IpcResponse::Error { message: "Barrier enabled".to_string() }
+                                } else {
                                     // Initiate new transfer
                                     let cursor_pos = hypr_client.cursor_pos().await
                                         .map(|c| (c.x, c.y))
@@ -1310,22 +1381,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     } else {
                                         IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
                                     }
-                                }
-                            } else {
-                                // Not in ReceivedControl - initiate new transfer
-                                let cursor_pos = hypr_client.cursor_pos().await
-                                    .map(|c| (c.x, c.y))
-                                    .unwrap_or((0, 0));
-
-                                if let Err(e) = transfer_manager.initiate_transfer(
-                                    direction,
-                                    cursor_pos,
-                                    screen_height,
-                                    screen_width,
-                                ).await {
-                                    IpcResponse::Error { message: format!("Transfer failed: {}", e) }
-                                } else {
-                                    IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
                                 }
                             }
                         } else {
@@ -1687,9 +1742,60 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
 
                     IpcRequest::Reload => {
-                        // TODO: Implement config hot-reload
-                        IpcResponse::Error {
-                            message: "Config reload not yet implemented".to_string(),
+                        // Re-read and validate config file
+                        match config::Config::load(&config_path) {
+                            Ok(new_config) => {
+                                // Check what changed
+                                let mut changes = Vec::new();
+                                let mut needs_restart = false;
+
+                                if new_config.machines.self_name != config.machines.self_name {
+                                    changes.push(format!(
+                                        "machine name: {} -> {} (requires restart)",
+                                        config.machines.self_name, new_config.machines.self_name
+                                    ));
+                                    needs_restart = true;
+                                }
+
+                                if new_config.network.listen_port != config.network.listen_port {
+                                    changes.push(format!(
+                                        "listen port: {} -> {} (requires restart)",
+                                        config.network.listen_port, new_config.network.listen_port
+                                    ));
+                                    needs_restart = true;
+                                }
+
+                                if new_config.machines.neighbors.len() != config.machines.neighbors.len() {
+                                    changes.push(format!(
+                                        "neighbors: {} -> {} (requires restart)",
+                                        config.machines.neighbors.len(), new_config.machines.neighbors.len()
+                                    ));
+                                    needs_restart = true;
+                                }
+
+                                if changes.is_empty() {
+                                    IpcResponse::Ok {
+                                        message: "Config unchanged".to_string(),
+                                    }
+                                } else if needs_restart {
+                                    IpcResponse::Ok {
+                                        message: format!(
+                                            "Config changes detected (restart required):\n  - {}",
+                                            changes.join("\n  - ")
+                                        ),
+                                    }
+                                } else {
+                                    IpcResponse::Ok {
+                                        message: format!(
+                                            "Config reloaded:\n  - {}",
+                                            changes.join("\n  - ")
+                                        ),
+                                    }
+                                }
+                            }
+                            Err(e) => IpcResponse::Error {
+                                message: format!("Failed to load config: {}", e),
+                            }
                         }
                     }
 
@@ -1706,34 +1812,51 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
 
                     IpcRequest::GetLogs { lines, follow: _ } => {
-                        // Read from log file
-                        let log_path = dirs::data_local_dir()
+                        // Find log files (rolling appender creates daemon.log.YYYY-MM-DD)
+                        let log_dir = dirs::data_local_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                            .join("hyprkvm")
-                            .join("daemon.log");
+                            .join("hyprkvm");
 
-                        if log_path.exists() {
-                            match std::fs::read_to_string(&log_path) {
-                                Ok(content) => {
-                                    let n = lines.unwrap_or(50) as usize;
-                                    let log_lines: Vec<String> = content
-                                        .lines()
-                                        .rev()
-                                        .take(n)
-                                        .map(|s| s.to_string())
-                                        .collect::<Vec<_>>()
-                                        .into_iter()
-                                        .rev()
-                                        .collect();
-                                    IpcResponse::Logs { lines: log_lines }
-                                }
-                                Err(e) => IpcResponse::Error {
-                                    message: format!("Failed to read log file: {}", e),
+                        // Find the most recent log file
+                        let log_file = std::fs::read_dir(&log_dir)
+                            .ok()
+                            .and_then(|entries| {
+                                entries
+                                    .filter_map(|e| e.ok())
+                                    .filter(|e| {
+                                        e.file_name()
+                                            .to_string_lossy()
+                                            .starts_with("daemon.log")
+                                    })
+                                    .max_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
+                                    .map(|e| e.path())
+                            });
+
+                        match log_file {
+                            Some(path) => {
+                                match std::fs::read_to_string(&path) {
+                                    Ok(content) => {
+                                        let n = lines.unwrap_or(50) as usize;
+                                        let log_lines: Vec<String> = content
+                                            .lines()
+                                            .rev()
+                                            .take(n)
+                                            .map(|s| s.to_string())
+                                            .collect::<Vec<_>>()
+                                            .into_iter()
+                                            .rev()
+                                            .collect();
+                                        IpcResponse::Logs { lines: log_lines }
+                                    }
+                                    Err(e) => IpcResponse::Error {
+                                        message: format!("Failed to read log file: {}", e),
+                                    }
                                 }
                             }
-                        } else {
-                            IpcResponse::Logs {
-                                lines: vec!["Log file not found. File logging may not be configured.".to_string()],
+                            None => {
+                                IpcResponse::Logs {
+                                    lines: vec!["No log files found.".to_string()],
+                                }
                             }
                         }
                     }
