@@ -981,17 +981,11 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 tracing::debug!("Injecting arrow key-up for {:?} to fix stuck key state", dir);
                                 emu.keyboard.key(arrow_keycode, hyprkvm_common::KeyState::Released);
 
-                                // Also release common modifiers that might be stuck
-                                // The user likely held Super (and possibly others) when initiating
-                                tracing::debug!("Injecting modifier key-ups to reset Hyprland state");
-                                emu.keyboard.key(125, hyprkvm_common::KeyState::Released); // KEY_LEFTMETA
-                                emu.keyboard.key(126, hyprkvm_common::KeyState::Released); // KEY_RIGHTMETA
-                                emu.keyboard.key(42, hyprkvm_common::KeyState::Released);  // KEY_LEFTSHIFT
-                                emu.keyboard.key(54, hyprkvm_common::KeyState::Released);  // KEY_RIGHTSHIFT
-                                emu.keyboard.key(29, hyprkvm_common::KeyState::Released);  // KEY_LEFTCTRL
-                                emu.keyboard.key(97, hyprkvm_common::KeyState::Released);  // KEY_RIGHTCTRL
-                                emu.keyboard.key(56, hyprkvm_common::KeyState::Released);  // KEY_LEFTALT
-                                emu.keyboard.key(100, hyprkvm_common::KeyState::Released); // KEY_RIGHTALT
+                                // Use reset_all_keys() to properly clear modifier state
+                                // This sends modifiers(0,0,0,0) and flushes, which is required
+                                // for Hyprland to actually clear its modifier tracking
+                                tracing::debug!("Resetting all keys to clear Hyprland modifier state");
+                                emu.keyboard.reset_all_keys();
                             }
                         }
                     }
