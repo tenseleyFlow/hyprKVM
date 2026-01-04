@@ -53,7 +53,7 @@ pub struct EdgeCaptureConfig {
 impl Default for EdgeCaptureConfig {
     fn default() -> Self {
         Self {
-            barrier_size: 1,
+            barrier_size: 5, // 5 pixels to ensure we catch events
             enabled_edges: vec![
                 Direction::Left,
                 Direction::Right,
@@ -89,6 +89,13 @@ struct EdgeCaptureState {
 
     // Track outputs for barrier sizing
     outputs: Vec<OutputInfo>,
+
+    // Track which barrier surface the pointer is currently on
+    active_barrier_idx: Option<usize>,
+    // Last position on barrier (for detecting edge-pushing motion)
+    last_barrier_pos: (f64, f64),
+    // Debounce: last time we sent an event for each direction
+    last_trigger_time: std::collections::HashMap<Direction, Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,41 +111,51 @@ impl EdgeCaptureState {
     fn create_barriers(&mut self, qh: &QueueHandle<Self>) {
         // Get total screen bounds
         let (min_x, min_y, max_x, max_y) = self.screen_bounds();
-        let total_width = (max_x - min_x) as u32;
-        let total_height = (max_y - min_y) as u32;
 
         for direction in &self.config.enabled_edges.clone() {
+            // Find the correct output for this edge direction
+            let target_output = self.find_edge_output(*direction);
+
             let (width, height, anchor) = match direction {
                 Direction::Left => (
                     self.config.barrier_size,
-                    total_height,
+                    target_output.as_ref().map(|o| o.height).unwrap_or((max_y - min_y) as u32),
                     Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM,
                 ),
                 Direction::Right => (
                     self.config.barrier_size,
-                    total_height,
+                    target_output.as_ref().map(|o| o.height).unwrap_or((max_y - min_y) as u32),
                     Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM,
                 ),
                 Direction::Up => (
-                    total_width,
+                    target_output.as_ref().map(|o| o.width).unwrap_or((max_x - min_x) as u32),
                     self.config.barrier_size,
                     Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
                 ),
                 Direction::Down => (
-                    total_width,
+                    target_output.as_ref().map(|o| o.width).unwrap_or((max_x - min_x) as u32),
                     self.config.barrier_size,
                     Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
                 ),
             };
 
-            // Create layer surface
+            // Create layer surface on the specific edge output
             let surface = self.compositor_state.create_surface(qh);
+            let output_ref = target_output.as_ref().map(|o| &o.output);
             let layer_surface = self.layer_shell.create_layer_surface(
                 qh,
                 surface,
                 Layer::Top, // Top layer to catch pointer
                 Some(format!("hyprkvm-edge-{}", direction)),
-                None, // No specific output, use focused
+                output_ref,
+            );
+
+            tracing::info!(
+                "Creating {:?} barrier on output {:?}, size {}x{}",
+                direction,
+                target_output.as_ref().map(|o| format!("at ({}, {})", o.x, o.y)),
+                width,
+                height
             );
 
             // Configure the layer surface
@@ -397,27 +414,105 @@ impl PointerHandler for EdgeCaptureState {
         _pointer: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
+        const DEBOUNCE_MS: u128 = 300; // Minimum time between triggers
+        const EDGE_THRESHOLD: f64 = 2.0; // Position threshold for "at edge"
+
         for event in events {
-            if let PointerEventKind::Enter { .. } = event.kind {
-                // Pointer entered one of our barrier surfaces
-                let surface = &event.surface;
-                if let Some(idx) = self.find_barrier_by_surface(surface) {
-                    let barrier = &self.barriers[idx];
-                    let edge_event = EdgeEvent {
-                        direction: barrier.direction,
-                        position: (event.position.0 as i32, event.position.1 as i32),
-                        timestamp: Instant::now(),
-                    };
-
-                    tracing::info!(
-                        "Edge hit: {:?} at ({}, {})",
-                        barrier.direction,
-                        event.position.0,
-                        event.position.1
-                    );
-
-                    let _ = self.event_tx.send(edge_event);
+            match &event.kind {
+                PointerEventKind::Enter { .. } => {
+                    // Pointer entered one of our barrier surfaces
+                    if let Some(idx) = self.find_barrier_by_surface(&event.surface) {
+                        self.active_barrier_idx = Some(idx);
+                        self.last_barrier_pos = event.position;
+                        tracing::debug!(
+                            "Pointer entered {:?} barrier at ({}, {})",
+                            self.barriers[idx].direction,
+                            event.position.0,
+                            event.position.1
+                        );
+                    }
                 }
+                PointerEventKind::Leave { .. } => {
+                    if self.find_barrier_by_surface(&event.surface).is_some() {
+                        self.active_barrier_idx = None;
+                        tracing::debug!("Pointer left barrier");
+                    }
+                }
+                PointerEventKind::Motion { .. } => {
+                    // Check if we're on a barrier surface and detect edge-pushing motion
+                    if let Some(idx) = self.active_barrier_idx {
+                        let barrier = &self.barriers[idx];
+                        let (x, y) = event.position;
+                        let (last_x, last_y) = self.last_barrier_pos;
+
+                        tracing::trace!(
+                            "Motion on {:?} barrier: pos=({:.1}, {:.1}) last=({:.1}, {:.1}) size={}x{}",
+                            barrier.direction,
+                            x, y, last_x, last_y, barrier.width, barrier.height
+                        );
+
+                        // Calculate motion delta
+                        let dx = x - last_x;
+                        let dy = y - last_y;
+
+                        // Check if motion is toward the edge while at the edge
+                        let is_edge_push = match barrier.direction {
+                            Direction::Left => x <= EDGE_THRESHOLD && dx < -0.1,
+                            Direction::Right => x >= (barrier.width as f64 - EDGE_THRESHOLD) && dx > 0.1,
+                            Direction::Up => y <= EDGE_THRESHOLD && dy < -0.1,
+                            Direction::Down => y >= (barrier.height as f64 - EDGE_THRESHOLD) && dy > 0.1,
+                        };
+
+                        // Also trigger if cursor is stuck at edge position (x=0 or similar)
+                        let is_at_edge = match barrier.direction {
+                            Direction::Left => x < 1.0,
+                            Direction::Right => x > (barrier.width as f64 - 1.0),
+                            Direction::Up => y < 1.0,
+                            Direction::Down => y > (barrier.height as f64 - 1.0),
+                        };
+
+                        if is_edge_push || is_at_edge {
+                            // Check debounce
+                            let now = Instant::now();
+                            let should_trigger = self
+                                .last_trigger_time
+                                .get(&barrier.direction)
+                                .map(|t| now.duration_since(*t).as_millis() >= DEBOUNCE_MS)
+                                .unwrap_or(true);
+
+                            if should_trigger {
+                                self.last_trigger_time.insert(barrier.direction, now);
+
+                                // Calculate screen position
+                                let (min_x, min_y, max_x, max_y) = self.screen_bounds();
+                                let screen_pos = match barrier.direction {
+                                    Direction::Left => (min_x, min_y + y as i32),
+                                    Direction::Right => (max_x - 1, min_y + y as i32),
+                                    Direction::Up => (min_x + x as i32, min_y),
+                                    Direction::Down => (min_x + x as i32, max_y - 1),
+                                };
+
+                                let edge_event = EdgeEvent {
+                                    direction: barrier.direction,
+                                    position: screen_pos,
+                                    timestamp: now,
+                                };
+
+                                tracing::info!(
+                                    "Edge trigger: {:?} at screen ({}, {})",
+                                    barrier.direction,
+                                    screen_pos.0,
+                                    screen_pos.1
+                                );
+
+                                let _ = self.event_tx.send(edge_event);
+                            }
+                        }
+
+                        self.last_barrier_pos = event.position;
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -515,6 +610,9 @@ fn run_capture_loop(
         event_tx,
         config,
         outputs: Vec::new(),
+        active_barrier_idx: None,
+        last_barrier_pos: (0.0, 0.0),
+        last_trigger_time: std::collections::HashMap::new(),
     };
 
     // Initial roundtrip to get outputs
