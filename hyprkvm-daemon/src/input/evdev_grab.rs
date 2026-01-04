@@ -207,17 +207,50 @@ fn run_evdev_grabber(
 
         // Read events if grabbed
         if grabbed && !devices.is_empty() {
+            // Accumulate motion deltas across all devices and events
+            let mut motion_dx: f64 = 0.0;
+            let mut motion_dy: f64 = 0.0;
+            let mut scroll_h: f64 = 0.0;
+            let mut scroll_v: f64 = 0.0;
+
             for (_path, dev) in &mut devices {
                 // Non-blocking read
                 if let Ok(events) = dev.fetch_events() {
                     for ev in events {
-                        if let Some(grab_event) = convert_event(&ev) {
-                            if event_tx.send(grab_event).is_err() {
-                                // Receiver dropped
-                                return Ok(());
+                        match convert_event(&ev) {
+                            Some(GrabEvent::PointerMotion { dx, dy }) => {
+                                // Accumulate motion instead of sending immediately
+                                motion_dx += dx;
+                                motion_dy += dy;
                             }
+                            Some(GrabEvent::Scroll { horizontal, vertical }) => {
+                                // Accumulate scroll
+                                scroll_h += horizontal;
+                                scroll_v += vertical;
+                            }
+                            Some(other) => {
+                                // Key events etc. - send immediately
+                                if event_tx.send(other).is_err() {
+                                    return Ok(());
+                                }
+                            }
+                            None => {}
                         }
                     }
+                }
+            }
+
+            // Send accumulated motion as single event (if any)
+            if motion_dx != 0.0 || motion_dy != 0.0 {
+                if event_tx.send(GrabEvent::PointerMotion { dx: motion_dx, dy: motion_dy }).is_err() {
+                    return Ok(());
+                }
+            }
+
+            // Send accumulated scroll as single event (if any)
+            if scroll_h != 0.0 || scroll_v != 0.0 {
+                if event_tx.send(GrabEvent::Scroll { horizontal: scroll_h, vertical: scroll_v }).is_err() {
+                    return Ok(());
                 }
             }
         }

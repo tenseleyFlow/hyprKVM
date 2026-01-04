@@ -366,6 +366,13 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                 if let Some(cap_dir) = capture_direction {
                     let mut should_escape = false;
 
+                    // Coalesce motion events - drain queue and accumulate
+                    let mut motion_dx: f64 = 0.0;
+                    let mut motion_dy: f64 = 0.0;
+                    let mut scroll_h: f64 = 0.0;
+                    let mut scroll_v: f64 = 0.0;
+                    let mut other_events: Vec<input::GrabEvent> = Vec::new();
+
                     while let Some(grab_event) = input_grabber.try_recv() {
                         // Check for escape key before forwarding
                         match &grab_event {
@@ -393,18 +400,58 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         }
                                     }
                                 }
+                                other_events.push(grab_event);
                             }
-                            _ => {}
+                            input::GrabEvent::KeyUp { .. } => {
+                                other_events.push(grab_event);
+                            }
+                            input::GrabEvent::PointerMotion { dx, dy } => {
+                                motion_dx += dx;
+                                motion_dy += dy;
+                            }
+                            input::GrabEvent::PointerButton { .. } => {
+                                other_events.push(grab_event);
+                            }
+                            input::GrabEvent::Scroll { horizontal, vertical } => {
+                                scroll_h += horizontal;
+                                scroll_v += vertical;
+                            }
+                            input::GrabEvent::ModifiersChanged { .. } => {
+                                other_events.push(grab_event);
+                            }
                         }
+                    }
 
-                        let payload = grab_event.to_protocol(input_sequence);
-                        input_sequence += 1;
+                    // Send non-motion events first (preserve order for key events)
+                    {
+                        let mut peers_guard = peers.write().await;
+                        if let Some(peer) = peers_guard.get_mut(&cap_dir) {
+                            for event in other_events {
+                                let payload = event.to_protocol(input_sequence);
+                                input_sequence += 1;
+                                if let Err(e) = peer.send(&Message::InputEvent(payload)).await {
+                                    tracing::error!("Failed to send input event: {}", e);
+                                }
+                            }
 
-                        let msg = Message::InputEvent(payload);
-                        let mut peers = peers.write().await;
-                        if let Some(peer) = peers.get_mut(&cap_dir) {
-                            if let Err(e) = peer.send(&msg).await {
-                                tracing::error!("Failed to send input event: {}", e);
+                            // Send coalesced motion as single event
+                            if motion_dx != 0.0 || motion_dy != 0.0 {
+                                let motion_event = input::GrabEvent::PointerMotion { dx: motion_dx, dy: motion_dy };
+                                let payload = motion_event.to_protocol(input_sequence);
+                                input_sequence += 1;
+                                if let Err(e) = peer.send(&Message::InputEvent(payload)).await {
+                                    tracing::error!("Failed to send motion event: {}", e);
+                                }
+                            }
+
+                            // Send coalesced scroll as single event
+                            if scroll_h != 0.0 || scroll_v != 0.0 {
+                                let scroll_event = input::GrabEvent::Scroll { horizontal: scroll_h, vertical: scroll_v };
+                                let payload = scroll_event.to_protocol(input_sequence);
+                                input_sequence += 1;
+                                if let Err(e) = peer.send(&Message::InputEvent(payload)).await {
+                                    tracing::error!("Failed to send scroll event: {}", e);
+                                }
                             }
                         }
                     }
@@ -422,8 +469,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             modifiers: hyprkvm_common::ModifierState::default(),
                             transfer_id: input_sequence, // Use as a simple unique ID
                         });
-                        let mut peers = peers.write().await;
-                        if let Some(peer) = peers.get_mut(&cap_dir) {
+                        let mut peers_guard = peers.write().await;
+                        if let Some(peer) = peers_guard.get_mut(&cap_dir) {
                             if let Err(e) = peer.send(&leave).await {
                                 tracing::error!("Failed to send Leave: {}", e);
                             }
