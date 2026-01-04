@@ -945,24 +945,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         info!("Stopping input capture");
                         let was_capturing_direction = capture_direction;
                         capture_direction = None;
-                        input_grabber.stop();
 
-                        // Drain any stale events from the grabber channel
-                        // These might have been captured during the race between
-                        // input_grabber.stop() and the evdev thread actually releasing
-                        let mut drained = 0;
-                        while input_grabber.try_recv().is_some() {
-                            drained += 1;
-                        }
-                        if drained > 0 {
-                            tracing::debug!("Drained {} stale events from grabber channel", drained);
-                        }
-
-                        // Fix for "first keypress eaten" bug on CAPTURE side:
-                        // When the transfer was initiated via keybinding (e.g., Super+Right),
-                        // Hyprland saw the keys DOWN but we grabbed before it saw the UPs.
-                        // So Hyprland thinks those keys are still pressed.
-                        // Inject key-ups for the arrow key AND modifiers used to initiate the transfer.
+                        // CRITICAL: Inject key-ups BEFORE releasing the evdev grab!
+                        // While the grab is active, Hyprland only sees our virtual keyboard.
+                        // If we inject key-ups now, Hyprland's state becomes "no keys pressed".
+                        // Then when we release the grab, new physical keypresses are fresh edges.
+                        //
+                        // If we inject AFTER releasing, Hyprland sees the physical keyboard
+                        // with stale state (Super still pressed from before grab), and our
+                        // virtual key-ups don't help.
                         if let Some(dir) = was_capturing_direction {
                             // Create emulator if needed
                             if input_emulator.is_none() {
@@ -978,15 +969,25 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     Direction::Up => 103,    // KEY_UP
                                     Direction::Down => 108,  // KEY_DOWN
                                 };
-                                tracing::debug!("Injecting arrow key-up for {:?} to fix stuck key state", dir);
+                                tracing::debug!("Injecting key-ups BEFORE releasing grab");
                                 emu.keyboard.key(arrow_keycode, hyprkvm_common::KeyState::Released);
 
-                                // Use reset_all_keys() to properly clear modifier state
-                                // This sends modifiers(0,0,0,0) and flushes, which is required
-                                // for Hyprland to actually clear its modifier tracking
-                                tracing::debug!("Resetting all keys to clear Hyprland modifier state");
+                                // Release all modifiers and send clean modifier state
+                                // This must happen while grab is still active!
                                 emu.keyboard.reset_all_keys();
                             }
+                        }
+
+                        // NOW release the evdev grab - Hyprland starts seeing physical keyboard
+                        input_grabber.stop();
+
+                        // Drain any stale events from the grabber channel
+                        let mut drained = 0;
+                        while input_grabber.try_recv().is_some() {
+                            drained += 1;
+                        }
+                        if drained > 0 {
+                            tracing::debug!("Drained {} stale events from grabber channel", drained);
                         }
                     }
                     transfer::TransferEvent::StartInjection { from } => {
