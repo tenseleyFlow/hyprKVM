@@ -73,9 +73,6 @@ cargo build --release
 
 See [config/hyprkvm.example.toml](config/hyprkvm.example.toml) for all options.
 
-## Architecture
-
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the full architecture and development plan.
 
 ## License
 
