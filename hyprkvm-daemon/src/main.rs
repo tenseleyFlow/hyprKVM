@@ -273,7 +273,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         }
     });
 
-    // Connect to configured peers
+    // Connect to configured peers (with retry loop)
     for neighbor in &config.machines.neighbors {
         let addr = neighbor.address;
         let direction = neighbor.direction;
@@ -281,49 +281,64 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         let machine_name = config.machines.self_name.clone();
 
         tokio::spawn(async move {
-            info!("Connecting to {} at {}...", direction, addr);
-            match network::connect(addr).await {
-                Ok(mut conn) => {
-                    // Send Hello
-                    let hello = Message::Hello(HelloPayload {
-                        protocol_version: PROTOCOL_VERSION,
-                        machine_name: machine_name.clone(),
-                        capabilities: vec![],
-                    });
-
-                    if let Err(e) = conn.send(&hello).await {
-                        tracing::error!("Failed to send Hello to {}: {}", direction, e);
-                        return;
+            loop {
+                // Check if already connected
+                {
+                    let peers = peers_clone.read().await;
+                    if peers.contains_key(&direction) {
+                        // Already connected, wait and check again
+                        drop(peers);
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        continue;
                     }
+                }
 
-                    // Wait for HelloAck
-                    match conn.recv().await {
-                        Ok(Some(Message::HelloAck(ack))) => {
-                            if ack.accepted {
-                                info!("Connected to {} ({})", ack.machine_name, direction);
+                tracing::debug!("Connecting to {} at {}...", direction, addr);
+                match network::connect(addr).await {
+                    Ok(mut conn) => {
+                        // Send Hello
+                        let hello = Message::Hello(HelloPayload {
+                            protocol_version: PROTOCOL_VERSION,
+                            machine_name: machine_name.clone(),
+                            capabilities: vec![],
+                        });
 
-                                // Split connection: store for sending, spawn receiver
-                                // For now, just store and we'll poll in the main loop
-                                let mut peers = peers_clone.write().await;
-                                peers.insert(direction, conn);
-                            } else {
-                                tracing::error!("Connection rejected: {:?}", ack.error);
+                        if let Err(e) = conn.send(&hello).await {
+                            tracing::error!("Failed to send Hello to {}: {}", direction, e);
+                            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                            continue;
+                        }
+
+                        // Wait for HelloAck
+                        match conn.recv().await {
+                            Ok(Some(Message::HelloAck(ack))) => {
+                                if ack.accepted {
+                                    info!("Connected to {} ({})", ack.machine_name, direction);
+                                    let mut peers = peers_clone.write().await;
+                                    peers.insert(direction, conn);
+                                    // Stay in loop to reconnect if connection drops
+                                } else {
+                                    tracing::error!("Connection rejected: {:?}", ack.error);
+                                }
+                            }
+                            Ok(Some(other)) => {
+                                tracing::warn!("Expected HelloAck, got {:?}", other);
+                            }
+                            Ok(None) => {
+                                tracing::warn!("Connection closed during handshake");
+                            }
+                            Err(e) => {
+                                tracing::error!("Handshake error: {}", e);
                             }
                         }
-                        Ok(Some(other)) => {
-                            tracing::warn!("Expected HelloAck, got {:?}", other);
-                        }
-                        Ok(None) => {
-                            tracing::warn!("Connection closed during handshake");
-                        }
-                        Err(e) => {
-                            tracing::error!("Handshake error: {}", e);
-                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Failed to connect to {} ({}): {}", direction, addr, e);
                     }
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to connect to {} ({}): {}", direction, addr, e);
-                }
+
+                // Retry after delay
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
         });
     }
