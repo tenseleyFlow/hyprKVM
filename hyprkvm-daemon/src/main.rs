@@ -958,19 +958,12 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             tracing::debug!("Drained {} stale events from grabber channel", drained);
                         }
 
-                        // Fix for "first keypress eaten" bug:
+                        // Fix for "first keypress eaten" bug on CAPTURE side:
                         // When the transfer was initiated via keybinding (e.g., Super+Right),
-                        // Hyprland saw the arrow key DOWN but we grabbed before it saw the UP.
-                        // So Hyprland thinks that arrow key is still pressed.
-                        // Inject a key-up for the arrow key used to initiate the transfer.
+                        // Hyprland saw the keys DOWN but we grabbed before it saw the UPs.
+                        // So Hyprland thinks those keys are still pressed.
+                        // Inject key-ups for the arrow key AND modifiers used to initiate the transfer.
                         if let Some(dir) = was_capturing_direction {
-                            let arrow_keycode = match dir {
-                                Direction::Left => 105,  // KEY_LEFT
-                                Direction::Right => 106, // KEY_RIGHT
-                                Direction::Up => 103,    // KEY_UP
-                                Direction::Down => 108,  // KEY_DOWN
-                            };
-
                             // Create emulator if needed
                             if input_emulator.is_none() {
                                 if let Ok(emu) = input::InputEmulator::new() {
@@ -978,8 +971,27 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 }
                             }
                             if let Some(ref mut emu) = input_emulator {
+                                // Release the arrow key that initiated the transfer
+                                let arrow_keycode = match dir {
+                                    Direction::Left => 105,  // KEY_LEFT
+                                    Direction::Right => 106, // KEY_RIGHT
+                                    Direction::Up => 103,    // KEY_UP
+                                    Direction::Down => 108,  // KEY_DOWN
+                                };
                                 tracing::debug!("Injecting arrow key-up for {:?} to fix stuck key state", dir);
                                 emu.keyboard.key(arrow_keycode, hyprkvm_common::KeyState::Released);
+
+                                // Also release common modifiers that might be stuck
+                                // The user likely held Super (and possibly others) when initiating
+                                tracing::debug!("Injecting modifier key-ups to reset Hyprland state");
+                                emu.keyboard.key(125, hyprkvm_common::KeyState::Released); // KEY_LEFTMETA
+                                emu.keyboard.key(126, hyprkvm_common::KeyState::Released); // KEY_RIGHTMETA
+                                emu.keyboard.key(42, hyprkvm_common::KeyState::Released);  // KEY_LEFTSHIFT
+                                emu.keyboard.key(54, hyprkvm_common::KeyState::Released);  // KEY_RIGHTSHIFT
+                                emu.keyboard.key(29, hyprkvm_common::KeyState::Released);  // KEY_LEFTCTRL
+                                emu.keyboard.key(97, hyprkvm_common::KeyState::Released);  // KEY_RIGHTCTRL
+                                emu.keyboard.key(56, hyprkvm_common::KeyState::Released);  // KEY_LEFTALT
+                                emu.keyboard.key(100, hyprkvm_common::KeyState::Released); // KEY_RIGHTALT
                             }
                         }
                     }
