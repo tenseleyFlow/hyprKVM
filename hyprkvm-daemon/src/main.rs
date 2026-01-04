@@ -155,6 +155,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     info!("Machine name: {}", config.machines.self_name);
     info!("Listening on port: {}", config.network.listen_port);
 
+    // Track daemon start time for uptime reporting
+    let daemon_start_time = std::time::Instant::now();
+
     // Connect to Hyprland
     info!("Connecting to Hyprland...");
     let hypr_client = hyprland::ipc::HyprlandClient::new().await?;
@@ -1347,19 +1350,124 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 .map(|n| n.name.clone())
                                 .collect()
                         };
-                        IpcResponse::Status { state, connected_peers }
+                        let uptime_secs = daemon_start_time.elapsed().as_secs();
+                        IpcResponse::Status {
+                            state,
+                            connected_peers,
+                            uptime_secs,
+                            machine_name: config.machines.self_name.clone(),
+                        }
                     }
                     IpcRequest::ListPeers => {
                         let peers_guard = peers.read().await;
                         let peer_list: Vec<hyprkvm_common::protocol::PeerInfo> = config.machines.neighbors
                             .iter()
-                            .map(|n| hyprkvm_common::protocol::PeerInfo {
-                                name: n.name.clone(),
-                                direction: n.direction,
-                                connected: peers_guard.contains_key(&n.direction),
+                            .map(|n| {
+                                let connected = peers_guard.contains_key(&n.direction);
+                                let status = if connected {
+                                    "connected".to_string()
+                                } else {
+                                    "disconnected".to_string()
+                                };
+                                hyprkvm_common::protocol::PeerInfo {
+                                    name: n.name.clone(),
+                                    direction: n.direction,
+                                    connected,
+                                    address: n.address.to_string(),
+                                    status,
+                                }
                             })
                             .collect();
                         IpcResponse::Peers { peers: peer_list }
+                    }
+                    IpcRequest::PingPeer { peer_name } => {
+                        // Find the peer by name
+                        let neighbor = config.machines.neighbors
+                            .iter()
+                            .find(|n| n.name == peer_name);
+
+                        match neighbor {
+                            Some(n) => {
+                                let direction = n.direction;
+                                let mut peers_guard = peers.write().await;
+
+                                if let Some(peer_conn) = peers_guard.get_mut(&direction) {
+                                    // Send Ping with current timestamp
+                                    let timestamp = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_millis() as u64;
+
+                                    if let Err(e) = peer_conn.send(&Message::Ping { timestamp }).await {
+                                        IpcResponse::PingResult {
+                                            peer_name,
+                                            latency_ms: None,
+                                            error: Some(format!("Send failed: {}", e)),
+                                        }
+                                    } else {
+                                        // Wait for Pong with timeout
+                                        match tokio::time::timeout(
+                                            std::time::Duration::from_secs(5),
+                                            peer_conn.recv()
+                                        ).await {
+                                            Ok(Ok(Some(Message::Pong { timestamp: pong_ts }))) => {
+                                                let now = std::time::SystemTime::now()
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .unwrap()
+                                                    .as_millis() as u64;
+                                                let latency = now.saturating_sub(pong_ts);
+                                                IpcResponse::PingResult {
+                                                    peer_name,
+                                                    latency_ms: Some(latency),
+                                                    error: None,
+                                                }
+                                            }
+                                            Ok(Ok(Some(_))) => {
+                                                IpcResponse::PingResult {
+                                                    peer_name,
+                                                    latency_ms: None,
+                                                    error: Some("Unexpected response".to_string()),
+                                                }
+                                            }
+                                            Ok(Ok(None)) => {
+                                                // Connection closed
+                                                peers_guard.remove(&direction);
+                                                IpcResponse::PingResult {
+                                                    peer_name,
+                                                    latency_ms: None,
+                                                    error: Some("Connection closed".to_string()),
+                                                }
+                                            }
+                                            Ok(Err(e)) => {
+                                                IpcResponse::PingResult {
+                                                    peer_name,
+                                                    latency_ms: None,
+                                                    error: Some(format!("Receive error: {}", e)),
+                                                }
+                                            }
+                                            Err(_) => {
+                                                IpcResponse::PingResult {
+                                                    peer_name,
+                                                    latency_ms: None,
+                                                    error: Some("Timeout".to_string()),
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    IpcResponse::PingResult {
+                                        peer_name,
+                                        latency_ms: None,
+                                        error: Some("Peer not connected".to_string()),
+                                    }
+                                }
+                            }
+                            None => {
+                                IpcResponse::Error {
+                                    message: format!("Unknown peer: {}", peer_name),
+                                }
+                            }
+                        }
                     }
                 };
 

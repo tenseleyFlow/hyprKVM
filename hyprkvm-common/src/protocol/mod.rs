@@ -217,6 +217,8 @@ pub enum IpcRequest {
     Status,
     /// List connected peers
     ListPeers,
+    /// Ping a specific peer by name
+    PingPeer { peer_name: String },
 }
 
 /// IPC response from daemon to CLI
@@ -231,9 +233,21 @@ pub enum IpcResponse {
     Status {
         state: String,
         connected_peers: Vec<String>,
+        /// Daemon uptime in seconds
+        uptime_secs: u64,
+        /// This machine's name
+        machine_name: String,
     },
     /// Peer list
     Peers { peers: Vec<PeerInfo> },
+    /// Ping result
+    PingResult {
+        peer_name: String,
+        /// Round-trip time in milliseconds (None if peer not connected)
+        latency_ms: Option<u64>,
+        /// Error message if ping failed
+        error: Option<String>,
+    },
     /// Error occurred
     Error { message: String },
 }
@@ -244,4 +258,8 @@ pub struct PeerInfo {
     pub name: String,
     pub direction: Direction,
     pub connected: bool,
+    /// Configured address for this peer
+    pub address: String,
+    /// Connection status: "connected", "disconnected", "connecting"
+    pub status: String,
 }
