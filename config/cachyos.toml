@@ -12,6 +12,11 @@ address = "192.168.0.85:24850"
 listen_port = 24850
 bind_address = "0.0.0.0"
 
+[network.tls]
+enabled = true
+# cert_path and key_path default to ~/.config/hyprkvm/{cert,key}.pem
+# tofu = true (default) - auto-trust new peers on first connection
+
 [input.escape_hotkey]
 key = "scroll_lock"
 modifiers = []
