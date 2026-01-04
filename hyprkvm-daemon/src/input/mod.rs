@@ -6,8 +6,10 @@
 
 pub mod capture;
 pub mod emulation;
+pub mod evdev_grab;
 pub mod grabber;
 
 pub use capture::{EdgeCapture, EdgeCaptureConfig, EdgeEvent};
 pub use emulation::InputEmulator;
+pub use evdev_grab::EvdevGrabber;
 pub use grabber::{GrabEvent, InputGrabber, InputGrabberConfig};

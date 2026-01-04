@@ -50,3 +50,6 @@ dirs = { workspace = true }
 bytes = { workspace = true }
 hostname = { workspace = true }
 rustix = { workspace = true }
+
+# Input device handling (evdev)
+evdev = "0.12"

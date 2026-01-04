@@ -167,7 +167,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     })?;
 
     // Create input grabber (for when we send control elsewhere)
-    let input_grabber = input::InputGrabber::new(input::InputGrabberConfig::default())?;
+    // Use evdev-based grabber for reliable input capture at kernel level
+    let input_grabber = input::EvdevGrabber::new()?;
 
     // Create input emulator (for when we receive control from elsewhere)
     // This is created lazily when we first need to inject
