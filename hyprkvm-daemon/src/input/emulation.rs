@@ -29,7 +29,7 @@ use hyprkvm_common::{ButtonState, KeyState};
 /// Virtual pointer for mouse injection
 pub struct VirtualPointer {
     pointer: ZwlrVirtualPointerV1,
-    _connection: Arc<Connection>,
+    connection: Arc<Connection>,
 }
 
 impl VirtualPointer {
@@ -43,6 +43,7 @@ impl VirtualPointer {
 
         self.pointer.motion(time, dx, dy);
         self.pointer.frame();
+        let _ = self.connection.flush(); // Flush immediately for low latency
     }
 
     /// Send absolute motion (normalized 0.0-1.0)
@@ -58,6 +59,7 @@ impl VirtualPointer {
 
         self.pointer.motion_absolute(time, x_fixed, y_fixed, width, height);
         self.pointer.frame();
+        let _ = self.connection.flush();
     }
 
     /// Send button event
@@ -74,6 +76,7 @@ impl VirtualPointer {
 
         self.pointer.button(time, button, wl_state);
         self.pointer.frame();
+        let _ = self.connection.flush();
     }
 
     /// Send scroll (axis) event
@@ -90,13 +93,14 @@ impl VirtualPointer {
             self.pointer.axis(time, WlAxis::HorizontalScroll, horizontal);
         }
         self.pointer.frame();
+        let _ = self.connection.flush();
     }
 }
 
 /// Virtual keyboard for key injection
 pub struct VirtualKeyboard {
     keyboard: ZwpVirtualKeyboardV1,
-    _connection: Arc<Connection>,
+    connection: Arc<Connection>,
     keymap_set: bool,
 }
 
@@ -119,11 +123,13 @@ impl VirtualKeyboard {
 
         // Note: keycode needs to be offset by 8 for evdev->xkb conversion
         self.keyboard.key(time, keycode, wl_state);
+        let _ = self.connection.flush();
     }
 
     /// Send modifier state
     pub fn modifiers(&self, depressed: u32, latched: u32, locked: u32, group: u32) {
         self.keyboard.modifiers(depressed, latched, locked, group);
+        let _ = self.connection.flush();
     }
 }
 
@@ -328,11 +334,11 @@ impl InputEmulator {
         Ok(Self {
             pointer: VirtualPointer {
                 pointer,
-                _connection: conn.clone(),
+                connection: conn.clone(),
             },
             keyboard: VirtualKeyboard {
                 keyboard,
-                _connection: conn.clone(),
+                connection: conn.clone(),
                 keymap_set: true,
             },
             connection: conn,

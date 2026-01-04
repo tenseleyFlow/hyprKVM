@@ -198,7 +198,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     let mut last_cursor_pos: Option<(i32, i32)> = None;
     let mut edge_dwell_start: Option<(Direction, std::time::Instant)> = None;
     const EDGE_THRESHOLD: i32 = 2; // Pixels from edge to count as "at edge"
-    const EDGE_DWELL_MS: u64 = 150; // How long cursor must be at edge to trigger
+    const EDGE_DWELL_MS: u64 = 50; // How long cursor must be at edge to trigger
 
     // Connection storage: direction -> peer connection
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =

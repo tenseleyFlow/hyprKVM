@@ -222,8 +222,8 @@ fn run_evdev_grabber(
             }
         }
 
-        // Small sleep to avoid busy-looping
-        thread::sleep(std::time::Duration::from_millis(1));
+        // Minimal sleep to avoid busy-looping while keeping latency low
+        thread::sleep(std::time::Duration::from_micros(100));
     }
 }
 
