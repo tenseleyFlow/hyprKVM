@@ -520,6 +520,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             input::GrabEvent::ModifiersChanged { .. } => {
                                 other_events.push(grab_event);
                             }
+                            input::GrabEvent::RecoveryHotkey { .. } => {
+                                // Should not happen during capture, ignore
+                                tracing::warn!("RecoveryHotkey received during capture, ignoring");
+                            }
                         }
                     }
 
@@ -561,7 +565,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     if should_escape {
                         info!("Escape triggered - stopping capture");
                         capture_direction = None;
-                        input_grabber.stop();
+                        input_grabber.stop(None); // No recovery needed for escape
 
                         // Send Leave message - we're leaving in the opposite direction (returning to us)
                         let leave = Message::Leave(hyprkvm_common::protocol::LeavePayload {
@@ -574,6 +578,134 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         if let Some(peer) = peers_guard.get_mut(&cap_dir) {
                             if let Err(e) = peer.send(&leave).await {
                                 tracing::error!("Failed to send Leave: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Not capturing - check for RecoveryHotkey events from recovery mode
+                    // These bypass libinput's stale state by detecting keypresses directly at evdev level
+                    while let Some(grab_event) = input_grabber.try_recv() {
+                        if let input::GrabEvent::RecoveryHotkey { direction } = grab_event {
+                            info!("RECOVERY HOTKEY: Super+{:?} detected via evdev", direction);
+
+                            // Same at_edge check as IPC Move - only transfer if at edge monitor+window
+                            let at_edge = 'edge_check: {
+                                // Get monitors and find focused one
+                                let monitors = match hypr_client.monitors().await {
+                                    Ok(m) => m,
+                                    Err(e) => {
+                                        info!("  RECOVERY edge_check: monitors query failed: {}", e);
+                                        break 'edge_check false;
+                                    }
+                                };
+                                let focused_monitor = match monitors.iter().find(|m| m.focused) {
+                                    Some(m) => m,
+                                    None => {
+                                        info!("  RECOVERY edge_check: no focused monitor found");
+                                        break 'edge_check false;
+                                    }
+                                };
+
+                                // Check if there's another monitor in the requested direction
+                                let has_monitor_in_direction = monitors.iter().any(|m| {
+                                    if m.id == focused_monitor.id { return false; }
+                                    match direction {
+                                        Direction::Left => m.x + m.width as i32 <= focused_monitor.x,
+                                        Direction::Right => m.x >= focused_monitor.x + focused_monitor.width as i32,
+                                        Direction::Up => m.y + m.height as i32 <= focused_monitor.y,
+                                        Direction::Down => m.y >= focused_monitor.y + focused_monitor.height as i32,
+                                    }
+                                });
+
+                                if has_monitor_in_direction {
+                                    info!("  RECOVERY edge_check: has monitor in direction {:?}", direction);
+                                    break 'edge_check false;
+                                }
+
+                                // On edge monitor. Check if at edge window.
+                                let active_window: serde_json::Value = match hypr_client.query("activewindow").await {
+                                    Ok(w) => w,
+                                    Err(e) => {
+                                        info!("  RECOVERY edge_check: activewindow query failed: {}", e);
+                                        break 'edge_check false;
+                                    }
+                                };
+
+                                let win_x = active_window.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                                let win_y = active_window.get("at").and_then(|a| a.get(1)).and_then(|y| y.as_i64()).unwrap_or(0) as i32;
+                                let win_w = active_window.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(100) as i32;
+                                let win_h = active_window.get("size").and_then(|s| s.get(1)).and_then(|h| h.as_i64()).unwrap_or(100) as i32;
+
+                                // Get all clients (windows)
+                                let clients: Vec<serde_json::Value> = match hypr_client.query("clients").await {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        info!("  RECOVERY edge_check: clients query failed: {}", e);
+                                        break 'edge_check false;
+                                    }
+                                };
+
+                                // Check if any window is further in the requested direction on same monitor
+                                let has_window_in_direction = clients.iter().any(|client| {
+                                    let mon = client.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32;
+                                    if mon != focused_monitor.id { return false; }
+
+                                    let cx = client.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                                    let cy = client.get("at").and_then(|a| a.get(1)).and_then(|y| y.as_i64()).unwrap_or(0) as i32;
+                                    let cw = client.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(0) as i32;
+                                    let ch = client.get("size").and_then(|s| s.get(1)).and_then(|h| h.as_i64()).unwrap_or(0) as i32;
+
+                                    match direction {
+                                        Direction::Left => cx + cw < win_x + 10,
+                                        Direction::Right => cx > win_x + win_w - 10,
+                                        Direction::Up => cy + ch < win_y + 10,
+                                        Direction::Down => cy > win_y + win_h - 10,
+                                    }
+                                });
+
+                                info!("  RECOVERY edge_check: has_window_in_direction={} -> at_edge={}", has_window_in_direction, !has_window_in_direction);
+                                !has_window_in_direction
+                            };
+
+                            // Check if we have a peer in this direction
+                            let has_peer = {
+                                let peers = peers.read().await;
+                                peers.contains_key(&direction)
+                            };
+
+                            if at_edge && has_peer {
+                                // Get cursor position for transfer
+                                let cursor_pos = hypr_client.cursor_pos().await
+                                    .map(|c| (c.x, c.y))
+                                    .unwrap_or((0, 0));
+
+                                info!("RECOVERY HOTKEY: At edge with peer, initiating transfer to {:?}", direction);
+                                if let Err(e) = transfer_manager.initiate_transfer(
+                                    direction,
+                                    cursor_pos,
+                                    screen_height,
+                                    screen_width,
+                                ).await {
+                                    tracing::error!("Failed to initiate transfer from recovery hotkey: {}", e);
+                                }
+                            } else if !at_edge {
+                                // Not at edge - need to do movefocus ourselves because libinput
+                                // DROPPED the keypress due to stale state (it thinks the arrow key
+                                // is still pressed from before the grab). This is the whole reason
+                                // recovery mode exists.
+                                let hypr_dir = match direction {
+                                    Direction::Left => "l",
+                                    Direction::Right => "r",
+                                    Direction::Up => "u",
+                                    Direction::Down => "d",
+                                };
+                                info!("RECOVERY HOTKEY: Not at edge, doing movefocus {} (libinput dropped the keypress)", hypr_dir);
+                                match hypr_client.dispatch("movefocus", hypr_dir).await {
+                                    Ok(()) => info!("  RECOVERY movefocus succeeded"),
+                                    Err(e) => tracing::error!("  RECOVERY movefocus failed: {}", e),
+                                }
+                            } else {
+                                info!("RECOVERY HOTKEY: No peer in direction {:?}", direction);
                             }
                         }
                     }
@@ -946,8 +1078,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let was_capturing_direction = capture_direction;
                         capture_direction = None;
 
-                        // Release the evdev grab
-                        input_grabber.stop();
+                        // Release the evdev grab and enter recovery mode for the stale direction
+                        // The stale key is the arrow key used to initiate the original outgoing transfer
+                        input_grabber.stop(was_capturing_direction);
 
                         // Drain any remaining events
                         while input_grabber.try_recv().is_some() {}

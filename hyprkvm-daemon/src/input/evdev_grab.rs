@@ -7,19 +7,29 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 
 use evdev::{Device, InputEventKind};
+use hyprkvm_common::Direction;
 use rustix::fs::{fcntl_setfl, OFlags};
 
 use super::grabber::GrabEvent;
 
+// Recovery mode ends when:
+// 1. Super key is released (user stopped trying keybinds or will retry with fresh state)
+// 2. The target key combo is detected
+// 3. A new grab starts
+
 /// Evdev-based input grabber
 pub struct EvdevGrabber {
     active: Arc<AtomicBool>,
+    /// Flag indicating recovery mode is active (1 = active, 0 = inactive)
+    recovery_active: Arc<AtomicU64>,
+    /// The direction to watch for in recovery mode (encoded as u8: 1=Up, 2=Down, 3=Left, 4=Right, 0=none)
+    recovery_direction: Arc<AtomicU64>,
     event_rx: mpsc::Receiver<GrabEvent>,
     _thread: thread::JoinHandle<()>,
 }
@@ -29,13 +39,17 @@ impl EvdevGrabber {
     pub fn new() -> Result<Self, EvdevGrabError> {
         let active = Arc::new(AtomicBool::new(false));
         let active_clone = active.clone();
+        let recovery_active = Arc::new(AtomicU64::new(0));
+        let recovery_clone = recovery_active.clone();
+        let recovery_direction = Arc::new(AtomicU64::new(0));
+        let recovery_dir_clone = recovery_direction.clone();
 
         let (event_tx, event_rx) = mpsc::channel();
 
         let thread = thread::Builder::new()
             .name("evdev-grabber".to_string())
             .spawn(move || {
-                if let Err(e) = run_evdev_grabber(active_clone, event_tx) {
+                if let Err(e) = run_evdev_grabber(active_clone, recovery_clone, recovery_dir_clone, event_tx) {
                     tracing::error!("Evdev grabber error: {}", e);
                 }
             })
@@ -43,6 +57,8 @@ impl EvdevGrabber {
 
         Ok(Self {
             active,
+            recovery_active,
+            recovery_direction,
             event_rx,
             _thread: thread,
         })
@@ -51,12 +67,32 @@ impl EvdevGrabber {
     /// Start grabbing input
     pub fn start(&self) {
         tracing::info!("Starting evdev input grab");
+        // Cancel any recovery mode when starting a new grab
+        self.recovery_active.store(0, Ordering::SeqCst);
         self.active.store(true, Ordering::SeqCst);
     }
 
-    /// Stop grabbing input
-    pub fn stop(&self) {
-        tracing::info!("Stopping evdev input grab");
+    /// Stop grabbing input and enter recovery monitoring mode
+    /// `stale_direction` is the direction of the outgoing transfer - the key that's stale in libinput
+    pub fn stop(&self, stale_direction: Option<Direction>) {
+        // Encode direction: 1=Up, 2=Down, 3=Left, 4=Right, 0=none
+        let dir_code = match stale_direction {
+            Some(Direction::Up) => 1,
+            Some(Direction::Down) => 2,
+            Some(Direction::Left) => 3,
+            Some(Direction::Right) => 4,
+            None => 0,
+        };
+        self.recovery_direction.store(dir_code, Ordering::SeqCst);
+
+        tracing::info!("Stopping evdev input grab, entering recovery mode, watching for {:?}",
+            stale_direction);
+
+        // Activate recovery mode (will stay active until Super is released or hotkey detected)
+        if stale_direction.is_some() {
+            self.recovery_active.store(1, Ordering::SeqCst);
+        }
+        // Deactivate grab
         self.active.store(false, Ordering::SeqCst);
     }
 
@@ -124,6 +160,8 @@ fn find_input_devices() -> Vec<PathBuf> {
 
 fn run_evdev_grabber(
     active: Arc<AtomicBool>,
+    recovery_active: Arc<AtomicU64>,
+    recovery_direction: Arc<AtomicU64>,
     event_tx: mpsc::Sender<GrabEvent>,
 ) -> Result<(), EvdevGrabError> {
     let device_paths = find_input_devices();
@@ -137,161 +175,261 @@ fn run_evdev_grabber(
         tracing::debug!("  {}", path.display());
     }
 
-    // We'll open and grab devices fresh each time we activate
+    // State machine states
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum State {
+        Idle,
+        Grabbed,
+        Recovery,
+    }
+
     let mut devices: HashMap<PathBuf, Device> = HashMap::new();
-    let mut grabbed = false;
-    let mut last_active = false;
+    let mut state = State::Idle;
+
+    // Key state tracking for recovery mode (Super + Arrow detection)
+    let mut super_held = false;
+    let mut super_was_held_at_start = false; // Track if Super was held when recovery started
+    let mut recovery_hotkey_sent = false;
+
+    // Key codes
+    const KEY_LEFTMETA: u16 = 125;
+    const KEY_RIGHTMETA: u16 = 126;
+    const KEY_UP: u16 = 103;
+    const KEY_DOWN: u16 = 108;
+    const KEY_LEFT: u16 = 105;
+    const KEY_RIGHT: u16 = 106;
 
     loop {
         let is_active = active.load(Ordering::SeqCst);
+        let in_recovery = recovery_active.load(Ordering::SeqCst) == 1;
 
-        // Handle grab/ungrab transitions
-        if is_active != last_active {
-            last_active = is_active;
+        // State transitions
+        match state {
+            State::Idle => {
+                if is_active {
+                    // Transition to Grabbed
+                    devices.clear();
+                    tracing::info!("Opening and grabbing input devices...");
 
-            if is_active {
-                // Open and grab all devices fresh
-                devices.clear();
-                tracing::info!("Opening and grabbing input devices...");
+                    for path in &device_paths {
+                        match Device::open(path) {
+                            Ok(mut dev) => {
+                                let name = dev.name().unwrap_or("unknown").to_string();
+                                let fd = unsafe { BorrowedFd::borrow_raw(dev.as_raw_fd()) };
+                                let _ = fcntl_setfl(fd, OFlags::NONBLOCK);
+                                let _ = dev.fetch_events(); // Drain pending
 
-                for path in &device_paths {
-                    match Device::open(path) {
-                        Ok(mut dev) => {
-                            let name = dev.name().unwrap_or("unknown").to_string();
-
-                            // Set non-blocking mode
-                            // SAFETY: dev owns the fd and will outlive this borrow
-                            let fd = unsafe { BorrowedFd::borrow_raw(dev.as_raw_fd()) };
-                            if let Err(e) = fcntl_setfl(fd, OFlags::NONBLOCK) {
-                                tracing::warn!("Failed to set non-blocking on {}: {}", name, e);
-                            }
-
-                            // Drain any pending events before grabbing to start fresh
-                            let _ = dev.fetch_events();
-
-                            // Try to grab immediately after opening
-                            match dev.grab() {
-                                Ok(()) => {
-                                    tracing::info!("Grabbed: {} ({})", name, path.display());
-                                    devices.insert(path.clone(), dev);
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Cannot grab {} ({}): {}", name, path.display(), e);
-                                    // Don't add to devices if we can't grab
+                                match dev.grab() {
+                                    Ok(()) => {
+                                        tracing::info!("Grabbed: {} ({})", name, path.display());
+                                        devices.insert(path.clone(), dev);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Cannot grab {}: {}", name, e);
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to open {}: {}", path.display(), e);
+                            Err(e) => {
+                                tracing::warn!("Failed to open {}: {}", path.display(), e);
+                            }
                         }
                     }
-                }
 
-                if devices.is_empty() {
-                    tracing::error!("Failed to grab any input devices!");
-                } else {
-                    tracing::info!("Successfully grabbed {} devices", devices.len());
-                }
-                grabbed = true;
-            } else {
-                // Ungrab and close all devices
-                tracing::info!("Releasing {} input devices", devices.len());
-
-                for (path, mut dev) in devices.drain() {
-                    // Query physical key state while still grabbed
-                    let held_keys: Vec<u16> = if let Ok(state) = dev.get_key_state() {
-                        // Check which modifier/arrow keys are physically held
-                        let keys_to_check: &[u16] = &[
-                            125, 126,  // Super
-                            42, 54,    // Shift
-                            29, 97,    // Ctrl
-                            56, 100,   // Alt
-                            103, 108, 105, 106, // Arrows
-                        ];
-                        keys_to_check.iter()
-                            .filter(|&&k| state.contains(evdev::Key::new(k)))
-                            .copied()
-                            .collect()
+                    if devices.is_empty() {
+                        tracing::error!("Failed to grab any input devices!");
                     } else {
-                        Vec::new()
-                    };
-
-                    if !held_keys.is_empty() {
-                        tracing::debug!("Keys physically held during ungrab: {:?}", held_keys);
+                        tracing::info!("Successfully grabbed {} devices", devices.len());
+                        state = State::Grabbed;
                     }
-
-                    // Ungrab the device
-                    if let Err(e) = dev.ungrab() {
-                        tracing::warn!("Failed to ungrab {}: {}", path.display(), e);
-                        continue;
-                    }
-                    tracing::debug!("Released {}", path.display());
-
-                    // Device is dropped here, closing the fd
                 }
-                grabbed = false;
-
-                // Brief pause to let libinput process the ungrab
-                thread::sleep(std::time::Duration::from_millis(5));
             }
-        }
 
-        // Read events if grabbed
-        if grabbed && !devices.is_empty() {
-            // Accumulate motion deltas across all devices and events
-            let mut motion_dx: f64 = 0.0;
-            let mut motion_dy: f64 = 0.0;
-            let mut scroll_h: f64 = 0.0;
-            let mut scroll_v: f64 = 0.0;
+            State::Grabbed => {
+                if !is_active {
+                    // Transition to Recovery (ungrab but keep devices open)
+                    tracing::info!("Releasing grab, entering recovery mode");
 
-            for (_path, dev) in &mut devices {
-                // Non-blocking read
-                if let Ok(events) = dev.fetch_events() {
-                    for ev in events {
-                        // Log raw key events from kernel for debugging
-                        if let InputEventKind::Key(key) = ev.kind() {
-                            tracing::debug!("RAW EVDEV: key={} value={} (1=press, 0=release, 2=repeat)",
-                                key.code(), ev.value());
+                    for (_path, dev) in &mut devices {
+                        if let Err(e) = dev.ungrab() {
+                            tracing::warn!("Failed to ungrab: {}", e);
                         }
-                        match convert_event(&ev) {
-                            Some(GrabEvent::PointerMotion { dx, dy }) => {
-                                // Accumulate motion instead of sending immediately
-                                motion_dx += dx;
-                                motion_dy += dy;
+                    }
+
+                    // Reset recovery state
+                    super_held = false;
+                    super_was_held_at_start = false;
+                    recovery_hotkey_sent = false;
+
+                    // Query current Super key state from physical keyboard
+                    for dev in devices.values() {
+                        if let Ok(key_state) = dev.get_key_state() {
+                            if key_state.contains(evdev::Key::new(KEY_LEFTMETA))
+                                || key_state.contains(evdev::Key::new(KEY_RIGHTMETA))
+                            {
+                                super_held = true;
+                                super_was_held_at_start = true;
+                                tracing::debug!("Super key is physically held at recovery start");
                             }
-                            Some(GrabEvent::Scroll { horizontal, vertical }) => {
-                                // Accumulate scroll
-                                scroll_h += horizontal;
-                                scroll_v += vertical;
-                            }
-                            Some(other) => {
-                                // Key events etc. - send immediately
-                                if event_tx.send(other).is_err() {
-                                    return Ok(());
+                        }
+                    }
+
+                    state = State::Recovery;
+                    tracing::info!("Now in recovery mode, super_held={}, super_was_held_at_start={}",
+                        super_held, super_was_held_at_start);
+                } else {
+                    // Still grabbed - forward events
+                    let mut motion_dx: f64 = 0.0;
+                    let mut motion_dy: f64 = 0.0;
+                    let mut scroll_h: f64 = 0.0;
+                    let mut scroll_v: f64 = 0.0;
+
+                    for dev in devices.values_mut() {
+                        if let Ok(events) = dev.fetch_events() {
+                            for ev in events {
+                                if let InputEventKind::Key(key) = ev.kind() {
+                                    tracing::debug!("RAW EVDEV: key={} value={}",
+                                        key.code(), ev.value());
+                                }
+                                match convert_event(&ev) {
+                                    Some(GrabEvent::PointerMotion { dx, dy }) => {
+                                        motion_dx += dx;
+                                        motion_dy += dy;
+                                    }
+                                    Some(GrabEvent::Scroll { horizontal, vertical }) => {
+                                        scroll_h += horizontal;
+                                        scroll_v += vertical;
+                                    }
+                                    Some(other) => {
+                                        if event_tx.send(other).is_err() {
+                                            return Ok(());
+                                        }
+                                    }
+                                    None => {}
                                 }
                             }
-                            None => {}
+                        }
+                    }
+
+                    if motion_dx != 0.0 || motion_dy != 0.0 {
+                        if event_tx.send(GrabEvent::PointerMotion { dx: motion_dx, dy: motion_dy }).is_err() {
+                            return Ok(());
+                        }
+                    }
+                    if scroll_h != 0.0 || scroll_v != 0.0 {
+                        if event_tx.send(GrabEvent::Scroll { horizontal: scroll_h, vertical: scroll_v }).is_err() {
+                            return Ok(());
                         }
                     }
                 }
             }
 
-            // Send accumulated motion as single event (if any)
-            if motion_dx != 0.0 || motion_dy != 0.0 {
-                if event_tx.send(GrabEvent::PointerMotion { dx: motion_dx, dy: motion_dy }).is_err() {
-                    return Ok(());
+            State::Recovery => {
+                if is_active {
+                    // New grab starting, go back to grabbed state
+                    // First close current devices, they'll be reopened fresh
+                    devices.clear();
+                    recovery_active.store(0, Ordering::SeqCst);
+                    state = State::Idle;
+                    continue;
                 }
-            }
 
-            // Send accumulated scroll as single event (if any)
-            if scroll_h != 0.0 || scroll_v != 0.0 {
-                if event_tx.send(GrabEvent::Scroll { horizontal: scroll_h, vertical: scroll_v }).is_err() {
-                    return Ok(());
+                if !in_recovery {
+                    // Recovery mode was disabled externally
+                    tracing::info!("Recovery mode ended (disabled)");
+                    devices.clear();
+                    state = State::Idle;
+                    continue;
+                }
+
+                // In recovery mode - monitor for Super+Arrow
+                // Read events WITHOUT grab (we're just observing)
+                let mut should_end_recovery = false;
+                let mut end_reason = "";
+
+                // Decode the direction we're watching for
+                let watch_dir_code = recovery_direction.load(Ordering::SeqCst);
+                let watch_direction: Option<Direction> = match watch_dir_code {
+                    1 => Some(Direction::Up),
+                    2 => Some(Direction::Down),
+                    3 => Some(Direction::Left),
+                    4 => Some(Direction::Right),
+                    _ => None,
+                };
+
+                for dev in devices.values_mut() {
+                    if let Ok(events) = dev.fetch_events() {
+                        for ev in events {
+                            if let InputEventKind::Key(key) = ev.kind() {
+                                let keycode = key.code();
+                                let pressed = ev.value() == 1;
+                                let released = ev.value() == 0;
+
+                                // Track Super key state
+                                if keycode == KEY_LEFTMETA || keycode == KEY_RIGHTMETA {
+                                    if pressed {
+                                        super_held = true;
+                                        tracing::debug!("RECOVERY: Super pressed");
+                                    } else if released {
+                                        super_held = false;
+                                        tracing::debug!("RECOVERY: Super released");
+
+                                        // End recovery when Super is released
+                                        // If Super was held at start, user has finished their keybind attempt
+                                        // If Super wasn't held at start, they did a fresh Super press+release
+                                        if super_was_held_at_start {
+                                            tracing::info!("RECOVERY: Super released (was held at start), ending recovery");
+                                            should_end_recovery = true;
+                                            end_reason = "Super released";
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // Check for Super+Arrow, but ONLY for the direction we're watching
+                                if pressed && super_held && !recovery_hotkey_sent {
+                                    let key_direction = match keycode {
+                                        KEY_UP => Some(Direction::Up),
+                                        KEY_DOWN => Some(Direction::Down),
+                                        KEY_LEFT => Some(Direction::Left),
+                                        KEY_RIGHT => Some(Direction::Right),
+                                        _ => None,
+                                    };
+
+                                    if let Some(dir) = key_direction {
+                                        // Only trigger if this matches the direction we're watching for
+                                        if watch_direction == Some(dir) {
+                                            tracing::info!("RECOVERY: Detected Super+{:?} (matches watch direction), sending hotkey event", dir);
+                                            if event_tx.send(GrabEvent::RecoveryHotkey { direction: dir }).is_err() {
+                                                return Ok(());
+                                            }
+                                            recovery_hotkey_sent = true;
+                                            should_end_recovery = true;
+                                            end_reason = "hotkey detected";
+                                            break;
+                                        } else {
+                                            tracing::debug!("RECOVERY: Ignoring Super+{:?} (watching for {:?})", dir, watch_direction);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if should_end_recovery {
+                        break;
+                    }
+                }
+
+                // End recovery mode if hotkey was detected or Super was released
+                if should_end_recovery {
+                    tracing::info!("Recovery mode ended ({})", end_reason);
+                    devices.clear();
+                    recovery_active.store(0, Ordering::SeqCst);
+                    state = State::Idle;
                 }
             }
         }
 
-        // Minimal sleep to avoid busy-looping while keeping latency low
+        // Minimal sleep
         thread::sleep(std::time::Duration::from_micros(100));
     }
 }

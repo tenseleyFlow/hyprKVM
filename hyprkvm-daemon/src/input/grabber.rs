@@ -44,6 +44,8 @@ pub enum GrabEvent {
     PointerButton { button: u32, pressed: bool },
     Scroll { horizontal: f64, vertical: f64 },
     ModifiersChanged { mods: Modifiers },
+    /// Hotkey detected during recovery monitoring (bypasses libinput stale state)
+    RecoveryHotkey { direction: hyprkvm_common::Direction },
 }
 
 impl GrabEvent {
@@ -76,6 +78,10 @@ impl GrabEvent {
                     alt: mods.alt,
                     super_key: mods.logo,
                 }
+            }
+            GrabEvent::RecoveryHotkey { .. } => {
+                // This is a local-only event, should never be sent over network
+                panic!("RecoveryHotkey cannot be converted to protocol");
             }
         };
 
