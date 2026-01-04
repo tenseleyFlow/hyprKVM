@@ -1042,9 +1042,16 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Execute local hyprctl move
+    // Execute local hyprctl move (hyprctl uses short form: l, r, u, d)
+    let hypr_dir = match dir {
+        Direction::Left => "l",
+        Direction::Right => "r",
+        Direction::Up => "u",
+        Direction::Down => "d",
+    };
+
     let output = tokio::process::Command::new("hyprctl")
-        .args(["dispatch", "movefocus", &dir.to_string()])
+        .args(["dispatch", "movefocus", hypr_dir])
         .output()
         .await?;
 
