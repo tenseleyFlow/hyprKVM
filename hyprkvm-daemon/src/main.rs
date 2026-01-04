@@ -417,6 +417,24 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     };
 
                     if has_peer {
+                        // Check if we're in ReceivedControl state from this direction
+                        // If so, return control instead of initiating a new transfer
+                        let current_state = transfer_manager.state().await;
+                        if let transfer::TransferState::ReceivedControl { from, .. } = current_state {
+                            if from == direction {
+                                info!(
+                                    "EDGE: {:?} at ({}, {}) - returning control",
+                                    direction,
+                                    edge_event.position.0,
+                                    edge_event.position.1
+                                );
+                                if let Err(e) = transfer_manager.return_control().await {
+                                    tracing::warn!("Failed to return control: {}", e);
+                                }
+                                continue;
+                            }
+                        }
+
                         info!(
                             "EDGE: {:?} at ({}, {}) - initiating transfer",
                             direction,
@@ -489,6 +507,22 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                 };
 
                                                 if has_peer {
+                                                    // Check if we're in ReceivedControl state from this direction
+                                                    let current_state = transfer_manager.state().await;
+                                                    if let transfer::TransferState::ReceivedControl { from, .. } = current_state {
+                                                        if from == edge_dir {
+                                                            info!(
+                                                                "CURSOR EDGE: {:?} at ({}, {}) - returning control",
+                                                                edge_dir, cx, cy
+                                                            );
+                                                            if let Err(e) = transfer_manager.return_control().await {
+                                                                tracing::warn!("Failed to return control: {}", e);
+                                                            }
+                                                            edge_dwell_start = None;
+                                                            continue;
+                                                        }
+                                                    }
+
                                                     info!(
                                                         "CURSOR EDGE: {:?} at ({}, {}) - initiating transfer",
                                                         edge_dir, cx, cy
