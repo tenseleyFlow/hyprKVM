@@ -1000,7 +1000,11 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
                     transfer::TransferEvent::StopInjection => {
                         info!("Stopping input injection");
-                        // Keep emulator around for next time
+                        // Reset modifier state so next session starts clean
+                        // This prevents Hyprland from seeing stale modifier state
+                        if let Some(ref mut emu) = input_emulator {
+                            emu.keyboard.reset_modifiers();
+                        }
                     }
                 }
             }

@@ -208,6 +208,43 @@ impl VirtualKeyboard {
         self.keyboard.modifiers(depressed, latched, locked, group);
         let _ = self.connection.flush();
     }
+
+    /// Release all pressed modifiers and reset internal state
+    /// Call this when stopping injection to ensure clean state for next session
+    pub fn reset_modifiers(&mut self) {
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u32;
+
+        // Release any pressed modifier keys
+        let modifiers_to_release = [
+            (self.modifier_state.left_shift, 42, "LEFTSHIFT"),
+            (self.modifier_state.right_shift, 54, "RIGHTSHIFT"),
+            (self.modifier_state.left_ctrl, 29, "LEFTCTRL"),
+            (self.modifier_state.right_ctrl, 97, "RIGHTCTRL"),
+            (self.modifier_state.left_alt, 56, "LEFTALT"),
+            (self.modifier_state.right_alt, 100, "RIGHTALT"),
+            (self.modifier_state.left_super, 125, "LEFTMETA"),
+            (self.modifier_state.right_super, 126, "RIGHTMETA"),
+        ];
+
+        for (is_pressed, keycode, name) in modifiers_to_release {
+            if is_pressed {
+                tracing::debug!("RESET: Releasing {} (keycode={})", name, keycode);
+                self.keyboard.key(time, keycode, wl_keyboard_key_state::RELEASED);
+            }
+        }
+
+        // Reset internal state
+        self.modifier_state = ModifierTracker::default();
+
+        // Send clean modifier state to compositor
+        self.keyboard.modifiers(0, 0, 0, 0);
+        let _ = self.connection.flush();
+
+        tracing::debug!("Modifier state reset complete");
+    }
 }
 
 // Key state constants
