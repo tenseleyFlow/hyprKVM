@@ -886,6 +886,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                 let response = match request {
                     IpcRequest::Move { direction } => {
+                        // Log current state for debugging
+                        let current_state = transfer_manager.state().await;
+                        tracing::debug!("IPC Move {:?}: state={:?}", direction, current_state);
+
                         // For keyboard navigation, check if we're at the absolute edge:
                         // 1. On edge monitor (no monitor in that direction)
                         // 2. On edge window of that monitor (no window further in that direction)
@@ -968,10 +972,11 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             .find(|n| n.direction == direction)
                             .map(|n| n.name.clone());
 
+                        tracing::debug!("IPC Move {:?}: at_edge={}, has_peer={}", direction, at_edge, has_peer);
+
                         // At edge with peer: either return control or initiate transfer
                         if at_edge && has_peer && neighbor_name.is_some() {
                             // Check if we're in ReceivedControl state from this direction
-                            let current_state = transfer_manager.state().await;
                             if let transfer::TransferState::ReceivedControl { from, .. } = current_state {
                                 if from == direction {
                                     // Return control to source machine
@@ -1025,7 +1030,11 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 Direction::Up => "u",
                                 Direction::Down => "d",
                             };
-                            let _ = hypr_client.dispatch("movefocus", hypr_dir).await;
+                            tracing::debug!("IPC Move {:?}: doing local movefocus {}", direction, hypr_dir);
+                            match hypr_client.dispatch("movefocus", hypr_dir).await {
+                                Ok(()) => tracing::debug!("movefocus succeeded"),
+                                Err(e) => tracing::error!("movefocus failed: {}", e),
+                            }
                             IpcResponse::DoLocalMove
                         }
                     }
