@@ -61,3 +61,6 @@ evdev = "0.12"
 wl-clipboard-rs = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
