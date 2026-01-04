@@ -196,12 +196,45 @@ fn run_evdev_grabber(
             } else {
                 // Ungrab and close all devices
                 tracing::info!("Releasing {} input devices", devices.len());
+
+                // Key codes for modifiers and arrow keys that might be held
+                let keys_to_release: &[u16] = &[
+                    125, 126,           // KEY_LEFTMETA, KEY_RIGHTMETA (Super)
+                    42, 54,             // KEY_LEFTSHIFT, KEY_RIGHTSHIFT
+                    29, 97,             // KEY_LEFTCTRL, KEY_RIGHTCTRL
+                    56, 100,            // KEY_LEFTALT, KEY_RIGHTALT
+                    103, 108, 105, 106, // KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT
+                ];
+
                 for (path, mut dev) in devices.drain() {
+                    // First ungrab so libinput can receive events
                     if let Err(e) = dev.ungrab() {
                         tracing::warn!("Failed to ungrab {}: {}", path.display(), e);
                     } else {
                         tracing::debug!("Released {}", path.display());
                     }
+
+                    // CRITICAL FIX: Synthesize key-up events AFTER ungrabbing!
+                    // When we grabbed the device, the user was holding Super+Arrow.
+                    // If they're STILL holding those keys, libinput's state from
+                    // before the grab still has those keys pressed. By sending
+                    // synthetic key-ups now (after ungrab), libinput sees them
+                    // as releases, and subsequent presses will be fresh edges.
+                    for &keycode in keys_to_release {
+                        let key_event = evdev::InputEvent::new(
+                            evdev::EventType::KEY,
+                            keycode,
+                            0, // 0 = released
+                        );
+                        let syn_event = evdev::InputEvent::new(
+                            evdev::EventType::SYNCHRONIZATION,
+                            0, // SYN_REPORT
+                            0,
+                        );
+                        // Ignore errors - not all devices support all keys
+                        let _ = dev.send_events(&[key_event, syn_event]);
+                    }
+
                     // Device is dropped here, closing the fd
                 }
                 grabbed = false;
