@@ -166,6 +166,9 @@ fn run_evdev_grabber(
                                 tracing::warn!("Failed to set non-blocking on {}: {}", name, e);
                             }
 
+                            // Drain any pending events before grabbing to start fresh
+                            let _ = dev.fetch_events();
+
                             // Try to grab immediately after opening
                             match dev.grab() {
                                 Ok(()) => {
@@ -217,6 +220,11 @@ fn run_evdev_grabber(
                 // Non-blocking read
                 if let Ok(events) = dev.fetch_events() {
                     for ev in events {
+                        // Log raw key events from kernel for debugging
+                        if let InputEventKind::Key(key) = ev.kind() {
+                            tracing::debug!("RAW EVDEV: key={} value={} (1=press, 0=release, 2=repeat)",
+                                key.code(), ev.value());
+                        }
                         match convert_event(&ev) {
                             Some(GrabEvent::PointerMotion { dx, dy }) => {
                                 // Accumulate motion instead of sending immediately

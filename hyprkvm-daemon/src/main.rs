@@ -947,6 +947,17 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         capture_direction = None;
                         input_grabber.stop();
 
+                        // Drain any stale events from the grabber channel
+                        // These might have been captured during the race between
+                        // input_grabber.stop() and the evdev thread actually releasing
+                        let mut drained = 0;
+                        while input_grabber.try_recv().is_some() {
+                            drained += 1;
+                        }
+                        if drained > 0 {
+                            tracing::debug!("Drained {} stale events from grabber channel", drained);
+                        }
+
                         // Fix for "first keypress eaten" bug:
                         // When the transfer was initiated via keybinding (e.g., Super+Right),
                         // Hyprland saw the arrow key DOWN but we grabbed before it saw the UP.
