@@ -12,4 +12,4 @@ pub mod grabber;
 pub use capture::{EdgeCapture, EdgeCaptureConfig, EdgeEvent};
 pub use emulation::InputEmulator;
 pub use evdev_grab::EvdevGrabber;
-pub use grabber::{GrabEvent, InputGrabber, InputGrabberConfig};
+pub use grabber::GrabEvent;
