@@ -45,6 +45,8 @@ tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
+sha2 = { workspace = true }
+time = { workspace = true }
 
 # Utilities
 dirs = { workspace = true }
