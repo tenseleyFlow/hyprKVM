@@ -886,6 +886,36 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                 let response = match request {
                     IpcRequest::Move { direction } => {
+                        // First check if we're in ReceivedControl state from this direction
+                        // If so, return control to the source machine
+                        let current_state = transfer_manager.state().await;
+                        if let transfer::TransferState::ReceivedControl { from, .. } = current_state {
+                            if from == direction {
+                                tracing::info!("Keyboard return: moving {:?} while in ReceivedControl from {:?}", direction, from);
+                                if let Err(e) = transfer_manager.return_control().await {
+                                    tracing::warn!("Failed to return control: {}", e);
+                                    IpcResponse::Error { message: format!("Return failed: {}", e) }
+                                } else {
+                                    // Get the machine name we're returning to
+                                    let machine_name = config.machines.neighbors
+                                        .iter()
+                                        .find(|n| n.direction == direction)
+                                        .map(|n| n.name.clone())
+                                        .unwrap_or_else(|| "unknown".to_string());
+                                    IpcResponse::Transferred { to_machine: machine_name }
+                                }
+                            } else {
+                                // Moving in a different direction while in ReceivedControl - just do local move
+                                let hypr_dir = match direction {
+                                    Direction::Left => "l",
+                                    Direction::Right => "r",
+                                    Direction::Up => "u",
+                                    Direction::Down => "d",
+                                };
+                                let _ = hypr_client.dispatch("movefocus", hypr_dir).await;
+                                IpcResponse::DoLocalMove
+                            }
+                        } else {
                         // For keyboard navigation, check if we're at the absolute edge:
                         // 1. On edge monitor (no monitor in that direction)
                         // 2. On edge window of that monitor (no window further in that direction)
@@ -996,6 +1026,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             let _ = hypr_client.dispatch("movefocus", hypr_dir).await;
                             IpcResponse::DoLocalMove
                         }
+                        } // end of else block for ReceivedControl check
                     }
                     IpcRequest::Status => {
                         let state = format!("{:?}", transfer_manager.state().await);
