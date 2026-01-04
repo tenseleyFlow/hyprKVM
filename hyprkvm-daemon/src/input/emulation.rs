@@ -104,6 +104,8 @@ pub struct VirtualKeyboard {
     keymap_set: bool,
     /// Track pressed modifier keys for state updates
     modifier_state: ModifierTracker,
+    /// Track all currently pressed keys for cleanup
+    pressed_keys: std::collections::HashSet<u32>,
 }
 
 /// Tracks which modifier keys are currently pressed
@@ -182,6 +184,13 @@ impl VirtualKeyboard {
             self.modifier_state.left_super || self.modifier_state.right_super
         );
 
+        // Track pressed keys for cleanup
+        if pressed {
+            self.pressed_keys.insert(keycode);
+        } else {
+            self.pressed_keys.remove(&keycode);
+        }
+
         // Send the key event
         self.keyboard.key(time, keycode, wl_state);
 
@@ -209,41 +218,30 @@ impl VirtualKeyboard {
         let _ = self.connection.flush();
     }
 
-    /// Release all pressed modifiers and reset internal state
+    /// Release all pressed keys and reset internal state
     /// Call this when stopping injection to ensure clean state for next session
-    pub fn reset_modifiers(&mut self) {
+    pub fn reset_all_keys(&mut self) {
         let time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u32;
 
-        // Release any pressed modifier keys
-        let modifiers_to_release = [
-            (self.modifier_state.left_shift, 42, "LEFTSHIFT"),
-            (self.modifier_state.right_shift, 54, "RIGHTSHIFT"),
-            (self.modifier_state.left_ctrl, 29, "LEFTCTRL"),
-            (self.modifier_state.right_ctrl, 97, "RIGHTCTRL"),
-            (self.modifier_state.left_alt, 56, "LEFTALT"),
-            (self.modifier_state.right_alt, 100, "RIGHTALT"),
-            (self.modifier_state.left_super, 125, "LEFTMETA"),
-            (self.modifier_state.right_super, 126, "RIGHTMETA"),
-        ];
-
-        for (is_pressed, keycode, name) in modifiers_to_release {
-            if is_pressed {
-                tracing::debug!("RESET: Releasing {} (keycode={})", name, keycode);
-                self.keyboard.key(time, keycode, wl_keyboard_key_state::RELEASED);
-            }
+        // Release ALL pressed keys (including arrow keys, not just modifiers)
+        let keys_to_release: Vec<u32> = self.pressed_keys.iter().copied().collect();
+        for keycode in keys_to_release {
+            tracing::debug!("RESET: Releasing key {} ({})", keycode, keycode_name(keycode));
+            self.keyboard.key(time, keycode, wl_keyboard_key_state::RELEASED);
         }
+        self.pressed_keys.clear();
 
-        // Reset internal state
+        // Reset modifier tracking
         self.modifier_state = ModifierTracker::default();
 
         // Send clean modifier state to compositor
         self.keyboard.modifiers(0, 0, 0, 0);
         let _ = self.connection.flush();
 
-        tracing::debug!("Modifier state reset complete");
+        tracing::debug!("All keys reset complete");
     }
 }
 
@@ -455,6 +453,7 @@ impl InputEmulator {
                 connection: conn.clone(),
                 keymap_set: true,
                 modifier_state: ModifierTracker::default(),
+                pressed_keys: std::collections::HashSet::new(),
             },
             connection: conn,
             event_queue,
