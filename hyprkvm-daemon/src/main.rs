@@ -244,9 +244,14 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 .map(|n| n.direction);
 
                             if let Some(dir) = direction {
-                                info!("Storing incoming connection from {} as {:?}", hello.machine_name, dir);
                                 let mut peers = peers_for_accept.write().await;
-                                peers.insert(dir, conn);
+                                if peers.contains_key(&dir) {
+                                    info!("Already have connection for {:?}, dropping incoming from {}", dir, hello.machine_name);
+                                    // Drop the incoming connection, keep the existing one
+                                } else {
+                                    info!("Storing incoming connection from {} as {:?}", hello.machine_name, dir);
+                                    peers.insert(dir, conn);
+                                }
                             } else {
                                 tracing::warn!(
                                     "Unknown peer '{}' connected - not in neighbors list",
@@ -313,9 +318,14 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         match conn.recv().await {
                             Ok(Some(Message::HelloAck(ack))) => {
                                 if ack.accepted {
-                                    info!("Connected to {} ({})", ack.machine_name, direction);
                                     let mut peers = peers_clone.write().await;
-                                    peers.insert(direction, conn);
+                                    if peers.contains_key(&direction) {
+                                        info!("Already have connection for {:?}, dropping outbound to {}", direction, ack.machine_name);
+                                        // Drop this connection, keep the existing one
+                                    } else {
+                                        info!("Connected to {} ({})", ack.machine_name, direction);
+                                        peers.insert(direction, conn);
+                                    }
                                     // Stay in loop to reconnect if connection drops
                                 } else {
                                     tracing::error!("Connection rejected: {:?}", ack.error);
