@@ -202,3 +202,46 @@ pub struct ClipboardDataPayload {
     /// Total chunks (if chunked)
     pub total_chunks: Option<u32>,
 }
+
+// ============================================================================
+// IPC Messages (CLI <-> Daemon)
+// ============================================================================
+
+/// IPC request from CLI to daemon
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum IpcRequest {
+    /// Request to move focus in a direction (keyboard navigation)
+    Move { direction: Direction },
+    /// Get daemon status
+    Status,
+    /// List connected peers
+    ListPeers,
+}
+
+/// IPC response from daemon to CLI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum IpcResponse {
+    /// Move was handled - transferred to another machine
+    Transferred { to_machine: String },
+    /// Move should be handled locally (no edge crossing)
+    DoLocalMove,
+    /// Status response
+    Status {
+        state: String,
+        connected_peers: Vec<String>,
+    },
+    /// Peer list
+    Peers { peers: Vec<PeerInfo> },
+    /// Error occurred
+    Error { message: String },
+}
+
+/// Info about a connected peer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerInfo {
+    pub name: String,
+    pub direction: Direction,
+    pub connected: bool,
+}

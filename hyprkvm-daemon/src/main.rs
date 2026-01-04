@@ -13,6 +13,7 @@ use tracing_subscriber::FmtSubscriber;
 mod config;
 mod hyprland;
 mod input;
+mod ipc;
 mod network;
 mod state;
 mod transfer;
@@ -355,6 +356,49 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
     // Listen for Hyprland events
     let mut event_stream = hyprland::events::HyprlandEventStream::connect().await?;
+
+    // Start IPC server for CLI commands
+    let (ipc_tx, mut ipc_rx) = tokio::sync::mpsc::channel::<(
+        hyprkvm_common::protocol::IpcRequest,
+        tokio::sync::oneshot::Sender<hyprkvm_common::protocol::IpcResponse>,
+    )>(16);
+
+    tokio::spawn(async move {
+        let server = match ipc::IpcServer::bind().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to start IPC server: {}", e);
+                return;
+            }
+        };
+
+        loop {
+            match server.accept().await {
+                Ok(mut conn) => {
+                    let ipc_tx = ipc_tx.clone();
+                    tokio::spawn(async move {
+                        match conn.recv().await {
+                            Ok(Some(request)) => {
+                                let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+                                if ipc_tx.send((request, resp_tx)).await.is_ok() {
+                                    if let Ok(response) = resp_rx.await {
+                                        let _ = conn.send(&response).await;
+                                    }
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                tracing::debug!("IPC recv error: {}", e);
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("IPC accept error: {}", e);
+                }
+            }
+        }
+    });
 
     info!("Daemon running. Move mouse to screen edges to trigger transfer. Press Ctrl+C to stop.");
 
@@ -836,6 +880,108 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                 }
             }
 
+            // Handle IPC requests from CLI
+            Some((request, response_tx)) = ipc_rx.recv() => {
+                use hyprkvm_common::protocol::{IpcRequest, IpcResponse};
+
+                let response = match request {
+                    IpcRequest::Move { direction } => {
+                        // Check if we're at the edge of our screen in this direction
+                        // and have a peer connected in that direction
+                        let at_edge = match direction {
+                            Direction::Left => {
+                                // Check if cursor is at left edge
+                                if let Ok(cursor) = hypr_client.cursor_pos().await {
+                                    cursor.x <= EDGE_THRESHOLD
+                                } else {
+                                    false
+                                }
+                            }
+                            Direction::Right => {
+                                if let Ok(cursor) = hypr_client.cursor_pos().await {
+                                    cursor.x >= screen_width as i32 - EDGE_THRESHOLD
+                                } else {
+                                    false
+                                }
+                            }
+                            Direction::Up => {
+                                if let Ok(cursor) = hypr_client.cursor_pos().await {
+                                    cursor.y <= EDGE_THRESHOLD
+                                } else {
+                                    false
+                                }
+                            }
+                            Direction::Down => {
+                                if let Ok(cursor) = hypr_client.cursor_pos().await {
+                                    cursor.y >= screen_height as i32 - EDGE_THRESHOLD
+                                } else {
+                                    false
+                                }
+                            }
+                        };
+
+                        // Check if we have a peer in this direction
+                        let has_peer = {
+                            let peers = peers.read().await;
+                            peers.contains_key(&direction)
+                        };
+
+                        // Get neighbor name if configured
+                        let neighbor_name = config.machines.neighbors
+                            .iter()
+                            .find(|n| n.direction == direction)
+                            .map(|n| n.name.clone());
+
+                        if at_edge && has_peer && neighbor_name.is_some() {
+                            // Initiate transfer
+                            let cursor_pos = hypr_client.cursor_pos().await
+                                .map(|c| (c.x, c.y))
+                                .unwrap_or((0, 0));
+
+                            if let Err(e) = transfer_manager.initiate_transfer(
+                                direction,
+                                cursor_pos,
+                                screen_height,
+                                screen_width,
+                            ).await {
+                                IpcResponse::Error { message: format!("Transfer failed: {}", e) }
+                            } else {
+                                IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
+                            }
+                        } else {
+                            // Let the CLI handle it locally
+                            IpcResponse::DoLocalMove
+                        }
+                    }
+                    IpcRequest::Status => {
+                        let state = format!("{:?}", transfer_manager.state().await);
+                        let connected_peers: Vec<String> = {
+                            let peers = peers.read().await;
+                            config.machines.neighbors
+                                .iter()
+                                .filter(|n| peers.contains_key(&n.direction))
+                                .map(|n| n.name.clone())
+                                .collect()
+                        };
+                        IpcResponse::Status { state, connected_peers }
+                    }
+                    IpcRequest::ListPeers => {
+                        let peers_guard = peers.read().await;
+                        let peer_list: Vec<hyprkvm_common::protocol::PeerInfo> = config.machines.neighbors
+                            .iter()
+                            .map(|n| hyprkvm_common::protocol::PeerInfo {
+                                name: n.name.clone(),
+                                direction: n.direction,
+                                connected: peers_guard.contains_key(&n.direction),
+                            })
+                            .collect();
+                        IpcResponse::Peers { peers: peer_list }
+                    }
+                };
+
+                let _ = response_tx.send(response);
+            }
+
             // Shutdown
             _ = tokio::signal::ctrl_c() => {
                 info!("Shutting down...");
@@ -858,12 +1004,45 @@ async fn show_status() -> anyhow::Result<()> {
 
 async fn handle_move(direction: &str) -> anyhow::Result<()> {
     use hyprkvm_common::Direction;
+    use hyprkvm_common::protocol::{IpcRequest, IpcResponse};
 
     let dir: Direction = direction.parse()?;
-    tracing::debug!("Move request: {}", dir);
 
-    // TODO: Connect to daemon, check if network switch needed
-    // For now, just execute local hyprctl move
+    // Try to connect to daemon
+    match ipc::IpcClient::connect().await {
+        Ok(mut client) => {
+            // Ask daemon if we should transfer or move locally
+            let request = IpcRequest::Move { direction: dir };
+            match client.request(&request).await {
+                Ok(IpcResponse::Transferred { to_machine }) => {
+                    // Transfer was initiated by daemon
+                    tracing::info!("Transferred control to {}", to_machine);
+                    return Ok(());
+                }
+                Ok(IpcResponse::DoLocalMove) => {
+                    // Fall through to local move
+                }
+                Ok(IpcResponse::Error { message }) => {
+                    tracing::warn!("Daemon error: {}", message);
+                    // Fall through to local move
+                }
+                Ok(_) => {
+                    tracing::warn!("Unexpected response from daemon");
+                    // Fall through to local move
+                }
+                Err(e) => {
+                    tracing::debug!("IPC request failed: {}, doing local move", e);
+                    // Fall through to local move
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Daemon not running ({}), doing local move", e);
+            // Fall through to local move
+        }
+    }
+
+    // Execute local hyprctl move
     let output = tokio::process::Command::new("hyprctl")
         .args(["dispatch", "movefocus", &dir.to_string()])
         .output()
