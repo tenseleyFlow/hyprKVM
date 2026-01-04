@@ -234,6 +234,7 @@ pub struct HyprkvmCertVerifier {
 
 impl HyprkvmCertVerifier {
     /// Create verifier with pinned fingerprint
+    #[allow(dead_code)]
     pub fn with_fingerprint(fingerprint: Fingerprint) -> Self {
         Self {
             expected_fingerprint: Some(fingerprint),
@@ -242,6 +243,7 @@ impl HyprkvmCertVerifier {
     }
 
     /// Create verifier with TOFU enabled
+    #[allow(dead_code)]
     pub fn with_tofu() -> Self {
         Self {
             expected_fingerprint: None,

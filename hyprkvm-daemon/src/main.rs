@@ -275,10 +275,41 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
         Arc::new(RwLock::new(HashMap::new()));
 
+    // TLS setup (if enabled)
+    let tls_enabled = config.network.tls.enabled;
+    if tls_enabled {
+        info!("TLS is enabled, ensuring certificates exist...");
+        let cert_path = std::path::Path::new(&config.network.tls.cert_path);
+        let key_path = std::path::Path::new(&config.network.tls.key_path);
+
+        if let Err(e) = network::ensure_certificate(cert_path, key_path, &config.machines.self_name) {
+            anyhow::bail!("Failed to setup TLS certificates: {}", e);
+        }
+
+        // Print certificate fingerprint for users to share
+        match network::get_cert_fingerprint(cert_path) {
+            Ok(fp) => {
+                info!("Certificate fingerprint: {}", fp);
+                info!("Share this fingerprint with peers for secure verification");
+            }
+            Err(e) => {
+                tracing::warn!("Could not read certificate fingerprint: {}", e);
+            }
+        }
+    } else {
+        info!("TLS is disabled (plain TCP mode for backwards compatibility)");
+    }
+
     // Start network server
     let listen_addr: SocketAddr = format!("0.0.0.0:{}", config.network.listen_port).parse()?;
-    let server = network::Server::bind(listen_addr).await?;
-    info!("Listening for connections on {}", server.local_addr());
+    let server = if tls_enabled {
+        let cert_path = std::path::Path::new(&config.network.tls.cert_path);
+        let key_path = std::path::Path::new(&config.network.tls.key_path);
+        network::Server::bind_tls(listen_addr, cert_path, key_path).await?
+    } else {
+        network::Server::bind(listen_addr).await?
+    };
+    info!("Listening for connections on {} (TLS: {})", server.local_addr(), tls_enabled);
 
     // Spawn task to accept incoming connections
     let machine_name = config.machines.self_name.clone();
@@ -355,6 +386,13 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         let direction = neighbor.direction;
         let peers_clone = peers.clone();
         let machine_name = config.machines.self_name.clone();
+        let neighbor_name = neighbor.name.clone();
+
+        // Determine if TLS should be used for this neighbor
+        // Per-neighbor override takes precedence over global setting
+        let use_tls = neighbor.tls.unwrap_or(tls_enabled);
+        let fingerprint = neighbor.fingerprint.clone();
+        let tofu_enabled = config.network.tls.tofu;
 
         tokio::spawn(async move {
             loop {
@@ -369,8 +407,21 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
                 }
 
-                tracing::debug!("Connecting to {} at {}...", direction, addr);
-                match network::connect(addr).await {
+                tracing::debug!("Connecting to {} at {} (TLS: {})...", direction, addr, use_tls);
+
+                // Connect with or without TLS
+                let conn_result = if use_tls {
+                    network::connect_tls(
+                        addr,
+                        &neighbor_name,
+                        fingerprint.as_deref(),
+                        tofu_enabled,
+                    ).await
+                } else {
+                    network::connect(addr).await
+                };
+
+                match conn_result {
                     Ok(mut conn) => {
                         // Send Hello
                         let hello = Message::Hello(HelloPayload {
@@ -1695,8 +1746,21 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 let peers_clone = peers.clone();
                                 let machine_name = config.machines.self_name.clone();
                                 let neighbor_name = n.name.clone();
+
+                                // Determine TLS settings for this neighbor
+                                let use_tls = n.tls.unwrap_or(tls_enabled);
+                                let fingerprint = n.fingerprint.clone();
+                                let tofu = config.network.tls.tofu;
+
                                 tokio::spawn(async move {
-                                    match network::connect(addr).await {
+                                    // Connect with or without TLS
+                                    let conn_result = if use_tls {
+                                        network::connect_tls(addr, &neighbor_name, fingerprint.as_deref(), tofu).await
+                                    } else {
+                                        network::connect(addr).await
+                                    };
+
+                                    match conn_result {
                                         Ok(mut conn) => {
                                             // Send Hello
                                             let hello = Message::Hello(HelloPayload {

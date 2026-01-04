@@ -2,6 +2,8 @@
 //!
 //! Handles peer-to-peer connections between HyprKVM instances.
 
+#![allow(unused_imports)]
+
 #[allow(dead_code)]
 pub mod known_hosts;
 #[allow(dead_code)]

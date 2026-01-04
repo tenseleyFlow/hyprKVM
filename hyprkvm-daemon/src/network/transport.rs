@@ -8,7 +8,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -16,7 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::server::TlsStream as ServerTlsStream;
-use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio_rustls::TlsAcceptor;
 
 use hyprkvm_common::protocol::Message;
 

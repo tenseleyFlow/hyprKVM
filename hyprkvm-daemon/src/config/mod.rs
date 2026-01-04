@@ -138,6 +138,10 @@ impl Default for NetworkConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
+    /// Enable TLS encryption (default: false for backwards compatibility)
+    #[serde(default)]
+    pub enabled: bool,
+
     /// Path to certificate file
     #[serde(default = "default_cert_path")]
     pub cert_path: String,
@@ -145,6 +149,10 @@ pub struct TlsConfig {
     /// Path to private key file
     #[serde(default = "default_key_path")]
     pub key_path: String,
+
+    /// Enable TOFU (Trust On First Use) for unknown peers
+    #[serde(default = "default_true")]
+    pub tofu: bool,
 }
 
 fn default_cert_path() -> String {
@@ -166,8 +174,10 @@ fn default_key_path() -> String {
 impl Default for TlsConfig {
     fn default() -> Self {
         Self {
+            enabled: false, // Default to false for backwards compatibility
             cert_path: default_cert_path(),
             key_path: default_key_path(),
+            tofu: true,
         }
     }
 }
@@ -209,8 +219,13 @@ pub struct NeighborConfig {
     /// Address (ip:port)
     pub address: SocketAddr,
 
-    /// Pre-trusted certificate fingerprint (optional)
+    /// Pre-trusted certificate fingerprint (optional, for TLS pinning)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+
+    /// Override TLS setting for this neighbor (uses global setting if None)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
