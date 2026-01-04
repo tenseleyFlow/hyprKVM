@@ -712,7 +712,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     Message::InputEvent(input_payload) => {
                                         tracing::trace!("Received input event: {:?}", input_payload);
                                         // Inject input via emulation module
-                                        if let Some(ref emu) = input_emulator {
+                                        if let Some(ref mut emu) = input_emulator {
                                             use hyprkvm_common::protocol::InputEventType;
                                             match input_payload.event {
                                                 InputEventType::KeyDown { keycode } => {

@@ -102,11 +102,60 @@ pub struct VirtualKeyboard {
     keyboard: ZwpVirtualKeyboardV1,
     connection: Arc<Connection>,
     keymap_set: bool,
+    /// Track pressed modifier keys for state updates
+    modifier_state: ModifierTracker,
+}
+
+/// Tracks which modifier keys are currently pressed
+#[derive(Default)]
+struct ModifierTracker {
+    left_shift: bool,
+    right_shift: bool,
+    left_ctrl: bool,
+    right_ctrl: bool,
+    left_alt: bool,
+    right_alt: bool,
+    left_super: bool,
+    right_super: bool,
+    caps_lock: bool,
+}
+
+impl ModifierTracker {
+    /// Update state based on key event, returns true if this was a modifier key
+    fn update(&mut self, keycode: u32, pressed: bool) -> bool {
+        match keycode {
+            42 => { self.left_shift = pressed; true }   // KEY_LEFTSHIFT
+            54 => { self.right_shift = pressed; true }  // KEY_RIGHTSHIFT
+            29 => { self.left_ctrl = pressed; true }    // KEY_LEFTCTRL
+            97 => { self.right_ctrl = pressed; true }   // KEY_RIGHTCTRL
+            56 => { self.left_alt = pressed; true }     // KEY_LEFTALT
+            100 => { self.right_alt = pressed; true }   // KEY_RIGHTALT
+            125 => { self.left_super = pressed; true }  // KEY_LEFTMETA
+            126 => { self.right_super = pressed; true } // KEY_RIGHTMETA
+            58 => { self.caps_lock = pressed; true }    // KEY_CAPSLOCK
+            _ => false,
+        }
+    }
+
+    /// Get XKB modifier mask for depressed modifiers
+    fn depressed(&self) -> u32 {
+        let mut mask = 0u32;
+        if self.left_shift || self.right_shift { mask |= 1; }      // Shift
+        if self.left_ctrl || self.right_ctrl { mask |= 4; }        // Control
+        if self.left_alt || self.right_alt { mask |= 8; }          // Mod1 (Alt)
+        if self.left_super || self.right_super { mask |= 64; }     // Mod4 (Super)
+        mask
+    }
+
+    /// Get XKB modifier mask for locked modifiers (Caps Lock)
+    fn locked(&self) -> u32 {
+        if self.caps_lock { 2 } else { 0 }  // Lock bit
+    }
 }
 
 impl VirtualKeyboard {
     /// Send key event
-    pub fn key(&self, keycode: u32, state: KeyState) {
+    pub fn key(&mut self, keycode: u32, state: KeyState) {
         if !self.keymap_set {
             tracing::warn!("Keymap not set, key event may not work correctly");
         }
@@ -116,17 +165,29 @@ impl VirtualKeyboard {
             .unwrap()
             .as_millis() as u32;
 
+        let pressed = state == KeyState::Pressed;
         let wl_state = match state {
             KeyState::Pressed => wl_keyboard_key_state::PRESSED,
             KeyState::Released => wl_keyboard_key_state::RELEASED,
         };
 
-        // Note: keycode needs to be offset by 8 for evdev->xkb conversion
+        // Send the key event
         self.keyboard.key(time, keycode, wl_state);
+
+        // If this is a modifier key, update and send modifier state
+        if self.modifier_state.update(keycode, pressed) {
+            self.keyboard.modifiers(
+                self.modifier_state.depressed(),
+                0, // latched
+                self.modifier_state.locked(),
+                0, // group
+            );
+        }
+
         let _ = self.connection.flush();
     }
 
-    /// Send modifier state
+    /// Send modifier state directly
     pub fn modifiers(&self, depressed: u32, latched: u32, locked: u32, group: u32) {
         self.keyboard.modifiers(depressed, latched, locked, group);
         let _ = self.connection.flush();
@@ -340,6 +401,7 @@ impl InputEmulator {
                 keyboard,
                 connection: conn.clone(),
                 keymap_set: true,
+                modifier_state: ModifierTracker::default(),
             },
             connection: conn,
             event_queue,
