@@ -886,38 +886,74 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                 let response = match request {
                     IpcRequest::Move { direction } => {
-                        // Check if we're at the edge of our screen in this direction
-                        // and have a peer connected in that direction
-                        let at_edge = match direction {
-                            Direction::Left => {
-                                // Check if cursor is at left edge
-                                if let Ok(cursor) = hypr_client.cursor_pos().await {
-                                    cursor.x <= EDGE_THRESHOLD
-                                } else {
-                                    false
+                        // For keyboard navigation, check if we're at the absolute edge:
+                        // 1. On edge monitor (no monitor in that direction)
+                        // 2. On edge window of that monitor (no window further in that direction)
+
+                        let at_edge = 'edge_check: {
+                            // Get monitors and find focused one
+                            let monitors = match hypr_client.monitors().await {
+                                Ok(m) => m,
+                                Err(_) => break 'edge_check false,
+                            };
+                            let focused_monitor = match monitors.iter().find(|m| m.focused) {
+                                Some(m) => m,
+                                None => break 'edge_check false,
+                            };
+
+                            // Check if there's another monitor in the requested direction
+                            let has_monitor_in_direction = monitors.iter().any(|m| {
+                                if m.id == focused_monitor.id { return false; }
+                                match direction {
+                                    Direction::Left => m.x + m.width as i32 <= focused_monitor.x,
+                                    Direction::Right => m.x >= focused_monitor.x + focused_monitor.width as i32,
+                                    Direction::Up => m.y + m.height as i32 <= focused_monitor.y,
+                                    Direction::Down => m.y >= focused_monitor.y + focused_monitor.height as i32,
                                 }
+                            });
+
+                            if has_monitor_in_direction {
+                                // There's a monitor in that direction, not at edge
+                                break 'edge_check false;
                             }
-                            Direction::Right => {
-                                if let Ok(cursor) = hypr_client.cursor_pos().await {
-                                    cursor.x >= screen_width as i32 - EDGE_THRESHOLD
-                                } else {
-                                    false
+
+                            // We're on the edge monitor. Now check if we're on the edge window.
+                            // Get active window position
+                            let active_window: serde_json::Value = match hypr_client.query("activewindow").await {
+                                Ok(w) => w,
+                                Err(_) => break 'edge_check false,
+                            };
+
+                            let win_x = active_window.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                            let win_y = active_window.get("at").and_then(|a| a.get(1)).and_then(|y| y.as_i64()).unwrap_or(0) as i32;
+                            let win_w = active_window.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(100) as i32;
+                            let win_h = active_window.get("size").and_then(|s| s.get(1)).and_then(|h| h.as_i64()).unwrap_or(100) as i32;
+
+                            // Get all clients (windows)
+                            let clients: Vec<serde_json::Value> = match hypr_client.query("clients").await {
+                                Ok(c) => c,
+                                Err(_) => break 'edge_check false,
+                            };
+
+                            // Check if any window is further in the requested direction on same monitor
+                            let has_window_in_direction = clients.iter().any(|client| {
+                                let mon = client.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32;
+                                if mon != focused_monitor.id { return false; }
+
+                                let cx = client.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                                let cy = client.get("at").and_then(|a| a.get(1)).and_then(|y| y.as_i64()).unwrap_or(0) as i32;
+                                let cw = client.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(0) as i32;
+                                let ch = client.get("size").and_then(|s| s.get(1)).and_then(|h| h.as_i64()).unwrap_or(0) as i32;
+
+                                match direction {
+                                    Direction::Left => cx + cw < win_x + 10, // Window is to the left
+                                    Direction::Right => cx > win_x + win_w - 10, // Window is to the right
+                                    Direction::Up => cy + ch < win_y + 10,
+                                    Direction::Down => cy > win_y + win_h - 10,
                                 }
-                            }
-                            Direction::Up => {
-                                if let Ok(cursor) = hypr_client.cursor_pos().await {
-                                    cursor.y <= EDGE_THRESHOLD
-                                } else {
-                                    false
-                                }
-                            }
-                            Direction::Down => {
-                                if let Ok(cursor) = hypr_client.cursor_pos().await {
-                                    cursor.y >= screen_height as i32 - EDGE_THRESHOLD
-                                } else {
-                                    false
-                                }
-                            }
+                            });
+
+                            !has_window_in_direction
                         };
 
                         // Check if we have a peer in this direction
@@ -932,8 +968,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             .find(|n| n.direction == direction)
                             .map(|n| n.name.clone());
 
+                        // Only transfer if at edge AND we have a connected peer
                         if at_edge && has_peer && neighbor_name.is_some() {
-                            // Initiate transfer
+                            // At edge and we have a peer - initiate transfer
                             let cursor_pos = hypr_client.cursor_pos().await
                                 .map(|c| (c.x, c.y))
                                 .unwrap_or((0, 0));
@@ -949,7 +986,14 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
                             }
                         } else {
-                            // Let the CLI handle it locally
+                            // Either not at edge, or at edge but no peer - do local movefocus
+                            let hypr_dir = match direction {
+                                Direction::Left => "l",
+                                Direction::Right => "r",
+                                Direction::Up => "u",
+                                Direction::Down => "d",
+                            };
+                            let _ = hypr_client.dispatch("movefocus", hypr_dir).await;
                             IpcResponse::DoLocalMove
                         }
                     }
@@ -1011,38 +1055,41 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
     // Try to connect to daemon
     match ipc::IpcClient::connect().await {
         Ok(mut client) => {
-            // Ask daemon if we should transfer or move locally
+            // Ask daemon to handle the move (it does movefocus internally)
             let request = IpcRequest::Move { direction: dir };
             match client.request(&request).await {
                 Ok(IpcResponse::Transferred { to_machine }) => {
-                    // Transfer was initiated by daemon
                     tracing::info!("Transferred control to {}", to_machine);
-                    return Ok(());
                 }
                 Ok(IpcResponse::DoLocalMove) => {
-                    // Fall through to local move
+                    // Daemon already did movefocus, nothing more to do
+                    tracing::debug!("Local move handled by daemon");
                 }
                 Ok(IpcResponse::Error { message }) => {
                     tracing::warn!("Daemon error: {}", message);
-                    // Fall through to local move
                 }
                 Ok(_) => {
                     tracing::warn!("Unexpected response from daemon");
-                    // Fall through to local move
                 }
                 Err(e) => {
-                    tracing::debug!("IPC request failed: {}, doing local move", e);
+                    tracing::debug!("IPC request failed: {}", e);
                     // Fall through to local move
+                    do_local_move(dir).await?;
                 }
             }
         }
         Err(e) => {
             tracing::debug!("Daemon not running ({}), doing local move", e);
-            // Fall through to local move
+            do_local_move(dir).await?;
         }
     }
 
-    // Execute local hyprctl move (hyprctl uses short form: l, r, u, d)
+    Ok(())
+}
+
+async fn do_local_move(dir: hyprkvm_common::Direction) -> anyhow::Result<()> {
+    use hyprkvm_common::Direction;
+
     let hypr_dir = match dir {
         Direction::Left => "l",
         Direction::Right => "r",
