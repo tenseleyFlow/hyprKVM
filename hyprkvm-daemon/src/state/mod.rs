@@ -2,6 +2,5 @@
 //!
 //! Maintains the unified state of the daemon.
 
+#[allow(dead_code)]
 pub mod manager;
-
-pub use manager::{ControlState, EdgeTrigger, NeighborInfo, StateError, StateManager};

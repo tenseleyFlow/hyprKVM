@@ -1,6 +1,7 @@
 //! Configuration management for HyprKVM
 
-use std::collections::HashMap;
+#![allow(dead_code)]
+
 use std::net::SocketAddr;
 use std::path::Path;
 

@@ -2,11 +2,13 @@
 //!
 //! Provides basic message framing and transport over TCP.
 
+#![allow(dead_code)]
+
 use std::io;
 use std::net::SocketAddr;
 
 use bytes::{Buf, BufMut, BytesMut};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use hyprkvm_common::protocol::Message;

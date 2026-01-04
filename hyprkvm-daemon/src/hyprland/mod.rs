@@ -4,8 +4,7 @@
 
 pub mod ipc;
 pub mod events;
+#[allow(dead_code)]
 pub mod layout;
+#[allow(dead_code)]
 pub mod edge;
-
-pub use ipc::HyprlandClient;
-pub use events::HyprlandEventStream;

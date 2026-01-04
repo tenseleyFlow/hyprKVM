@@ -1,8 +1,9 @@
 //! Transfer manager - orchestrates control handoff between machines
 
+#![allow(dead_code)]
+
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tokio::sync::{mpsc, RwLock};
 
@@ -423,6 +424,4 @@ pub enum TransferError {
     #[error("Channel closed")]
     ChannelClosed,
 
-    #[error("Timeout")]
-    Timeout,
 }

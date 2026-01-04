@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 
 use hyprkvm_common::protocol::{
@@ -83,7 +83,7 @@ impl Peer {
     pub async fn handshake_server(
         mut conn: FramedConnection,
         our_name: &str,
-        our_capabilities: &[String],
+        _our_capabilities: &[String],
     ) -> Result<Self, PeerError> {
         // Wait for Hello
         let request = timeout(HANDSHAKE_TIMEOUT, conn.recv())

@@ -2,8 +2,8 @@
 //!
 //! Handles peer-to-peer connections between HyprKVM instances.
 
+#[allow(dead_code)]
 pub mod peer;
 pub mod transport;
 
-pub use peer::{Peer, PeerError, PeerManager};
-pub use transport::{connect, FramedConnection, Server, TransportError};
+pub use transport::{connect, FramedConnection, Server};

@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
         _ => Level::TRACE,
     };
 
-    let subscriber = FmtSubscriber::builder()
+    FmtSubscriber::builder()
         .with_max_level(log_level)
         .with_target(false)
         .init();
@@ -193,7 +193,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     info!("Listening for connections on {}", server.local_addr());
 
     // Spawn task to accept incoming connections
-    let peers_clone = peers.clone();
     let machine_name = config.machines.self_name.clone();
     let accept_handle = tokio::spawn(async move {
         loop {
@@ -241,16 +240,12 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         }
     });
 
-    // Channel for incoming messages from peers
-    let (peer_msg_tx, mut peer_msg_rx) = tokio::sync::mpsc::channel::<(Direction, Message)>(64);
-
     // Connect to configured peers
     for neighbor in &config.machines.neighbors {
         let addr = neighbor.address;
         let direction = neighbor.direction;
         let peers_clone = peers.clone();
         let machine_name = config.machines.self_name.clone();
-        let msg_tx = peer_msg_tx.clone();
 
         tokio::spawn(async move {
             info!("Connecting to {} at {}...", direction, addr);

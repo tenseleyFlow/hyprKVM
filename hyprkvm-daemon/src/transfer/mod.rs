@@ -4,4 +4,4 @@
 
 pub mod manager;
 
-pub use manager::{TransferError, TransferEvent, TransferManager, TransferState};
+pub use manager::{TransferEvent, TransferManager};

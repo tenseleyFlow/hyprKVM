@@ -143,25 +143,25 @@ impl MonitorLayout {
     }
 
     // Helper functions to find closest neighbor
-    fn is_closer_left(&self, current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
+    fn is_closer_left(&self, _current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
         let Some(existing_name) = existing else { return true };
         let Some(existing_mon) = self.monitors.get(existing_name) else { return true };
         other.x + other.width as i32 > existing_mon.x + existing_mon.width as i32
     }
 
-    fn is_closer_right(&self, current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
+    fn is_closer_right(&self, _current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
         let Some(existing_name) = existing else { return true };
         let Some(existing_mon) = self.monitors.get(existing_name) else { return true };
         other.x < existing_mon.x
     }
 
-    fn is_closer_up(&self, current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
+    fn is_closer_up(&self, _current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
         let Some(existing_name) = existing else { return true };
         let Some(existing_mon) = self.monitors.get(existing_name) else { return true };
         other.y + other.height as i32 > existing_mon.y + existing_mon.height as i32
     }
 
-    fn is_closer_down(&self, current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
+    fn is_closer_down(&self, _current: &MonitorInfo, other: &MonitorInfo, existing: &Option<String>) -> bool {
         let Some(existing_name) = existing else { return true };
         let Some(existing_mon) = self.monitors.get(existing_name) else { return true };
         other.y < existing_mon.y

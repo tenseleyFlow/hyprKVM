@@ -2,6 +2,8 @@
 //!
 //! Communicates with Hyprland via its Unix socket.
 
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;

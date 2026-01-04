@@ -113,8 +113,8 @@ impl VirtualKeyboard {
             .as_millis() as u32;
 
         let wl_state = match state {
-            KeyState::Pressed => wl_keyboard_key_state::Pressed,
-            KeyState::Released => wl_keyboard_key_state::Released,
+            KeyState::Pressed => wl_keyboard_key_state::PRESSED,
+            KeyState::Released => wl_keyboard_key_state::RELEASED,
         };
 
         // Note: keycode needs to be offset by 8 for evdev->xkb conversion
@@ -129,8 +129,8 @@ impl VirtualKeyboard {
 
 // Key state constants
 mod wl_keyboard_key_state {
-    pub const Released: u32 = 0;
-    pub const Pressed: u32 = 1;
+    pub const RELEASED: u32 = 0;
+    pub const PRESSED: u32 = 1;
 }
 
 /// State for input emulation setup

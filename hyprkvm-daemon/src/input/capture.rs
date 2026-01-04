@@ -180,7 +180,7 @@ impl EdgeCaptureState {
         (min_x, min_y, max_x, max_y)
     }
 
-    fn draw_barrier(&mut self, barrier_idx: usize, qh: &QueueHandle<Self>) {
+    fn draw_barrier(&mut self, barrier_idx: usize, _qh: &QueueHandle<Self>) {
         let barrier = &self.barriers[barrier_idx];
         if !barrier.configured {
             return;
