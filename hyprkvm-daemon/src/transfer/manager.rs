@@ -233,6 +233,27 @@ impl TransferManager {
     ) -> Result<(i32, i32), TransferError> {
         let mut state = self.state.write().await;
 
+        // Validate current state - we can only receive Enter if we're Local or ReceivedControl
+        match &*state {
+            TransferState::Local => {
+                // Normal case - we're idle, ready to receive control
+            }
+            TransferState::ReceivedControl { .. } => {
+                // Already receiving, this is a re-entry - accept it
+                tracing::info!("Re-receiving control (was already in ReceivedControl)");
+            }
+            TransferState::Initiating { .. } => {
+                // We're trying to send control, but they're also trying to send to us
+                // This is a collision - let them win (accept their Enter)
+                tracing::warn!("Enter collision: we were Initiating, accepting their Enter");
+            }
+            TransferState::RemoteActive { .. } => {
+                // We're forwarding to them, but they're sending control back to us
+                // This shouldn't happen normally - they should send Leave, not Enter
+                tracing::warn!("Received Enter while in RemoteActive - unusual but accepting");
+            }
+        }
+
         // Calculate actual cursor position
         let cursor_pos = match payload.cursor_pos {
             CursorEntryPos::EdgeRelative(rel) => {
