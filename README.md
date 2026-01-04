@@ -9,6 +9,7 @@ Hyprland-native software KVM switch that integrates with workspace navigation.
 
 - **Workspace-integrated switching**: Move past your last workspace to switch machines
 - **Mouse edge switching**: Standard screen-edge triggers like Synergy/Barrier
+- **Hyprland keybind switching**: Trigger switches between machines using your movefocus hyprland binds
 - **Encrypted connections**: TLS with certificate pinning
 - **Clipboard sharing**: Sync clipboard between machines
 - **GUI and CLI**: Visual layout editor or config-file driven
