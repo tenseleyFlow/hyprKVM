@@ -610,14 +610,32 @@ fn convert_event(ev: &evdev::InputEvent) -> Option<GrabEvent> {
                     })
                 }
                 RelativeAxisType::REL_WHEEL => {
+                    tracing::debug!("SCROLL: REL_WHEEL value={}", ev.value());
                     Some(GrabEvent::Scroll {
                         horizontal: 0.0,
                         vertical: ev.value() as f64 * -15.0, // Invert and scale
                     })
                 }
                 RelativeAxisType::REL_HWHEEL => {
+                    tracing::debug!("SCROLL: REL_HWHEEL value={}", ev.value());
                     Some(GrabEvent::Scroll {
                         horizontal: ev.value() as f64 * 15.0,
+                        vertical: 0.0,
+                    })
+                }
+                // High-resolution scroll (modern mice)
+                RelativeAxisType::REL_WHEEL_HI_RES => {
+                    tracing::debug!("SCROLL: REL_WHEEL_HI_RES value={}", ev.value());
+                    // Hi-res scroll is 120 units per notch, scale down
+                    Some(GrabEvent::Scroll {
+                        horizontal: 0.0,
+                        vertical: ev.value() as f64 * -0.125, // -15.0 / 120.0
+                    })
+                }
+                RelativeAxisType::REL_HWHEEL_HI_RES => {
+                    tracing::debug!("SCROLL: REL_HWHEEL_HI_RES value={}", ev.value());
+                    Some(GrabEvent::Scroll {
+                        horizontal: ev.value() as f64 * 0.125,
                         vertical: 0.0,
                     })
                 }
