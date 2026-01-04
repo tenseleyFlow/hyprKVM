@@ -1,0 +1,26 @@
+# HyprKVM Configuration - CachyOS box (left side)
+
+[machines]
+self_name = "cachyos"
+
+[[machines.neighbors]]
+name = "nixos"
+direction = "right"
+address = "192.168.1.81:24850"
+
+[network]
+listen_port = 24850
+bind_address = "0.0.0.0"
+
+[input.escape_hotkey]
+key = "scroll_lock"
+modifiers = []
+triple_tap_enabled = true
+triple_tap_key = "shift"
+triple_tap_window_ms = 500
+
+[clipboard]
+enabled = true
+
+[logging]
+level = "debug"
