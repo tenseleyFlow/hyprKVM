@@ -86,11 +86,30 @@ impl VirtualPointer {
             .unwrap()
             .as_millis() as u32;
 
+        tracing::debug!("INJECT SCROLL: h={}, v={}", horizontal, vertical);
+
+        // Set axis source to wheel
+        use wayland_client::protocol::wl_pointer::AxisSource;
+        self.pointer.axis_source(AxisSource::Wheel);
+
         if vertical.abs() > 0.001 {
-            self.pointer.axis(time, WlAxis::VerticalScroll, vertical);
+            // Calculate discrete steps (each notch is typically 15 units)
+            let discrete = (vertical / 15.0).round() as i32;
+            if discrete != 0 {
+                // Send discrete scroll for wheel mice
+                self.pointer.axis_discrete(time, WlAxis::VerticalScroll, vertical, discrete);
+            } else {
+                // Fallback to smooth scroll for small values
+                self.pointer.axis(time, WlAxis::VerticalScroll, vertical);
+            }
         }
         if horizontal.abs() > 0.001 {
-            self.pointer.axis(time, WlAxis::HorizontalScroll, horizontal);
+            let discrete = (horizontal / 15.0).round() as i32;
+            if discrete != 0 {
+                self.pointer.axis_discrete(time, WlAxis::HorizontalScroll, horizontal, discrete);
+            } else {
+                self.pointer.axis(time, WlAxis::HorizontalScroll, horizontal);
+            }
         }
         self.pointer.frame();
         let _ = self.connection.flush();
