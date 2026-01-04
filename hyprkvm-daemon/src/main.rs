@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use tracing::{info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod clipboard;
 mod config;
 mod hyprland;
 mod input;
@@ -246,6 +247,11 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         config.machines.self_name.clone(),
     );
     let transfer_manager = Arc::new(transfer_manager);
+
+    // Create clipboard manager
+    let clipboard_manager = std::sync::Arc::new(clipboard::ClipboardManager::new(
+        config.clipboard.clone(),
+    ));
 
     // Track which direction we're capturing for
     let mut capture_direction: Option<Direction> = None;
@@ -1102,6 +1108,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                 }
 
                 for direction in directions {
+                    // Clone Arc before shadowing for use in spawned tasks
+                    let peers_arc = peers.clone();
                     let mut peers = peers.write().await;
                     if let Some(peer) = peers.get_mut(&direction) {
                         // Try non-blocking receive using tokio timeout
@@ -1197,6 +1205,55 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                 .unwrap()
                                                 .as_millis() as u64 - timestamp
                                         );
+                                    }
+                                    Message::ClipboardOffer(offer) => {
+                                        // Handle clipboard offer from peer
+                                        let cm = clipboard_manager.clone();
+                                        let peers_clone = peers_arc.clone();
+                                        let dir = direction;
+                                        tokio::spawn(async move {
+                                            if let Some(request) = cm.handle_offer(offer).await {
+                                                let mut peers_guard = peers_clone.write().await;
+                                                if let Some(peer) = peers_guard.get_mut(&dir) {
+                                                    if let Err(e) = peer.send(&Message::ClipboardRequest(request)).await {
+                                                        tracing::warn!("Failed to send clipboard request: {}", e);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                    Message::ClipboardRequest(request) => {
+                                        // Handle clipboard request from peer
+                                        let cm = clipboard_manager.clone();
+                                        let peers_clone = peers_arc.clone();
+                                        let dir = direction;
+                                        tokio::spawn(async move {
+                                            match cm.handle_request(request).await {
+                                                Ok(data_chunks) => {
+                                                    let mut peers_guard = peers_clone.write().await;
+                                                    if let Some(peer) = peers_guard.get_mut(&dir) {
+                                                        for chunk in data_chunks {
+                                                            if let Err(e) = peer.send(&Message::ClipboardData(chunk)).await {
+                                                                tracing::warn!("Failed to send clipboard data: {}", e);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Clipboard request failed: {}", e);
+                                                }
+                                            }
+                                        });
+                                    }
+                                    Message::ClipboardData(data) => {
+                                        // Handle clipboard data from peer
+                                        let cm = clipboard_manager.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = cm.handle_data(data).await {
+                                                tracing::warn!("Clipboard data handling failed: {}", e);
+                                            }
+                                        });
                                     }
                                     _ => {
                                         tracing::debug!("Unhandled message: {:?}", msg);
@@ -1335,6 +1392,33 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         // (e.g., arrow key that triggered return was never released)
                         if let Some(ref mut emu) = input_emulator {
                             emu.keyboard.reset_all_keys();
+                        }
+                    }
+                    transfer::TransferEvent::SyncClipboardOutgoing { direction } => {
+                        // Sync clipboard to the peer in the given direction
+                        // Check if clipboard sync is enabled and appropriate for this event
+                        if config.clipboard.enabled {
+                            let cm = clipboard_manager.clone();
+                            let peers_clone = peers.clone();
+                            tokio::spawn(async move {
+                                match cm.create_offer().await {
+                                    Ok(Some(offer)) => {
+                                        let mut peers_guard = peers_clone.write().await;
+                                        if let Some(peer) = peers_guard.get_mut(&direction) {
+                                            info!("Syncing clipboard to {:?}", direction);
+                                            if let Err(e) = peer.send(&Message::ClipboardOffer(offer)).await {
+                                                tracing::warn!("Failed to send clipboard offer: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        tracing::debug!("No clipboard content to sync");
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to read clipboard for sync: {}", e);
+                                    }
+                                }
+                            });
                         }
                     }
                 }

@@ -73,6 +73,8 @@ pub enum TransferEvent {
     StopInjection,
     /// Send a message to a peer
     SendMessage { direction: Direction, message: Message },
+    /// Sync clipboard to remote machine
+    SyncClipboardOutgoing { direction: Direction },
 }
 
 /// Manages control transfer between machines
@@ -229,6 +231,12 @@ impl TransferManager {
                     .await
                     .map_err(|_| TransferError::ChannelClosed)?;
 
+                // Trigger clipboard sync (if enabled, handled by main loop)
+                self.event_tx
+                    .send(TransferEvent::SyncClipboardOutgoing { direction })
+                    .await
+                    .map_err(|_| TransferError::ChannelClosed)?;
+
                 Ok(())
             }
             _ => Err(TransferError::InvalidState(
@@ -349,6 +357,12 @@ impl TransferManager {
                 let tid = *transfer_id;
 
                 tracing::info!("Returning control to {:?}", direction);
+
+                // Trigger clipboard sync before leaving (if enabled, handled by main loop)
+                self.event_tx
+                    .send(TransferEvent::SyncClipboardOutgoing { direction })
+                    .await
+                    .map_err(|_| TransferError::ChannelClosed)?;
 
                 // Send Leave message
                 let leave = Message::Leave(LeavePayload {
