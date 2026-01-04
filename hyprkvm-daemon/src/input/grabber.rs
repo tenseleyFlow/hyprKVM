@@ -554,6 +554,7 @@ impl KeyboardHandler for GrabberState {
         _: &[u32],
         _: &[Keysym],
     ) {
+        tracing::info!("Grabber keyboard ENTER - we have keyboard focus");
     }
 
     fn leave(
@@ -564,6 +565,7 @@ impl KeyboardHandler for GrabberState {
         _: &wl_surface::WlSurface,
         _: u32,
     ) {
+        tracing::info!("Grabber keyboard LEAVE - lost keyboard focus");
     }
 
     fn press_key(
@@ -574,6 +576,7 @@ impl KeyboardHandler for GrabberState {
         _: u32,
         event: KeyEvent,
     ) {
+        tracing::debug!("Grabber received key press: keycode={}, active={}", event.raw_code, self.active.load(Ordering::SeqCst));
         if self.active.load(Ordering::SeqCst) {
             let _ = self.event_tx.send(GrabEvent::KeyDown {
                 keycode: event.raw_code,
@@ -619,6 +622,18 @@ impl PointerHandler for GrabberState {
         _: &wl_pointer::WlPointer,
         events: &[PointerEvent],
     ) {
+        for event in events {
+            match &event.kind {
+                PointerEventKind::Enter { .. } => {
+                    tracing::info!("Grabber pointer ENTER at ({}, {})", event.position.0, event.position.1);
+                }
+                PointerEventKind::Leave { .. } => {
+                    tracing::info!("Grabber pointer LEAVE");
+                }
+                _ => {}
+            }
+        }
+
         if !self.active.load(Ordering::SeqCst) {
             return;
         }
