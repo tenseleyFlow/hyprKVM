@@ -200,6 +200,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
     // Spawn task to accept incoming connections
     let machine_name = config.machines.self_name.clone();
+    let neighbors_for_accept = config.machines.neighbors.clone();
+    let peers_for_accept = peers.clone();
     let accept_handle = tokio::spawn(async move {
         loop {
             match server.accept().await {
@@ -224,9 +226,23 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 continue;
                             }
 
-                            // TODO: Determine direction from peer info
-                            // For now, assume first connection is from configured neighbor
-                            // In production, match by machine name
+                            // Determine direction based on peer's machine name
+                            let direction = neighbors_for_accept
+                                .iter()
+                                .find(|n| n.name == hello.machine_name)
+                                .map(|n| n.direction);
+
+                            if let Some(dir) = direction {
+                                info!("Storing incoming connection from {} as {:?}", hello.machine_name, dir);
+                                let mut peers = peers_for_accept.write().await;
+                                peers.insert(dir, conn);
+                            } else {
+                                tracing::warn!(
+                                    "Unknown peer '{}' connected - not in neighbors list",
+                                    hello.machine_name
+                                );
+                                // Connection will be dropped
+                            }
                         }
                         Ok(Some(other)) => {
                             tracing::warn!("Expected Hello, got {:?}", other);
