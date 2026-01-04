@@ -7,7 +7,6 @@
 //! - Input capture and injection
 
 use clap::{Parser, Subcommand};
-use evdev;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -947,142 +946,46 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let was_capturing_direction = capture_direction;
                         capture_direction = None;
 
-                        // RECOVERY MODE: Keep evdev grab active briefly to detect keybind ourselves
-                        // This bypasses libinput's stale state issue - we read directly from evdev
-                        let recovery_start = std::time::Instant::now();
-                        let recovery_timeout = std::time::Duration::from_millis(500);
-                        let mut recovery_triggered = false;
+                        // Release the evdev grab
+                        input_grabber.stop();
 
-                        // Check if Super is already held by querying physical state
-                        // (user may have been holding Super throughout the transfer)
-                        let mut recovery_super_held = {
-                            // Try to query a keyboard device for key state
-                            let mut super_detected = false;
-                            if let Ok(entries) = std::fs::read_dir("/dev/input/by-id") {
-                                for entry in entries.flatten() {
-                                    let name = entry.file_name().to_string_lossy().to_lowercase();
-                                    if name.contains("kbd") || name.contains("keyboard") {
-                                        if let Ok(dev) = evdev::Device::open(entry.path()) {
-                                            if let Ok(state) = dev.get_key_state() {
-                                                if state.contains(evdev::Key::new(125)) ||
-                                                   state.contains(evdev::Key::new(126)) {
-                                                    super_detected = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
+                        // Drain any remaining events
+                        while input_grabber.try_recv().is_some() {}
+
+                        // CRITICAL FIX: After releasing the evdev grab, libinput has stale state.
+                        // The arrow key that initiated the original transfer (before we went remote)
+                        // is still seen as "pressed" by libinput because it never saw the release.
+                        //
+                        // We use uinput to create a virtual keyboard and send synthetic key-up
+                        // events for ALL arrow keys. This gives libinput fresh key-up events,
+                        // which should clear the stale state.
+                        if let Some(dir) = was_capturing_direction {
+                            // The stale key is the one used to initiate the OUTGOING transfer
+                            let stale_keycode: u16 = match dir {
+                                Direction::Left => 105,  // KEY_LEFT
+                                Direction::Right => 106, // KEY_RIGHT
+                                Direction::Up => 103,    // KEY_UP
+                                Direction::Down => 108,  // KEY_DOWN
+                            };
+
+                            tracing::info!("Sending synthetic key-ups via uinput to clear stale libinput state");
+
+                            // Send key-ups for all arrow keys to be safe
+                            let all_arrows: [u16; 4] = [103, 105, 106, 108];
+                            if let Err(e) = input::send_synthetic_key_ups(&all_arrows) {
+                                tracing::warn!("Failed to send synthetic key-ups: {}", e);
+                            }
+
+                            // Also inject via virtual keyboard for Wayland-level cleanup
+                            if input_emulator.is_none() {
+                                if let Ok(emu) = input::InputEmulator::new() {
+                                    input_emulator = Some(emu);
                                 }
                             }
-                            if super_detected {
-                                tracing::debug!("Recovery: Super already held at start");
+                            if let Some(ref mut emu) = input_emulator {
+                                emu.keyboard.key(stale_keycode as u32, hyprkvm_common::KeyState::Released);
+                                emu.keyboard.reset_all_keys();
                             }
-                            super_detected
-                        };
-
-                        tracing::info!("Entering recovery mode - monitoring for return keybind (Super held: {})", recovery_super_held);
-
-                        'recovery: loop {
-                            // Check for timeout
-                            if recovery_start.elapsed() > recovery_timeout {
-                                tracing::debug!("Recovery timeout - no keybind detected");
-                                break 'recovery;
-                            }
-
-                            // Process evdev events
-                            while let Some(event) = input_grabber.try_recv() {
-                                match event {
-                                    input::GrabEvent::KeyDown { keycode } => {
-                                        // Track Super key state
-                                        if keycode == 125 || keycode == 126 {
-                                            recovery_super_held = true;
-                                            tracing::debug!("Recovery: Super pressed");
-                                        }
-
-                                        // Check for Super+Arrow (our keybind)
-                                        if recovery_super_held {
-                                            let arrow_dir = match keycode {
-                                                103 => Some(Direction::Up),
-                                                108 => Some(Direction::Down),
-                                                105 => Some(Direction::Left),
-                                                106 => Some(Direction::Right),
-                                                _ => None,
-                                            };
-
-                                            if let Some(dir) = arrow_dir {
-                                                // Detected keybind! Trigger transfer via IPC to ourselves
-                                                tracing::info!("Recovery: detected Super+{:?}, triggering transfer directly", dir);
-
-                                                // Use hyprctl to trigger the keybind handler
-                                                // This will send IPC to the daemon (ourselves)
-                                                let dir_str = match dir {
-                                                    Direction::Left => "left",
-                                                    Direction::Right => "right",
-                                                    Direction::Up => "up",
-                                                    Direction::Down => "down",
-                                                };
-
-                                                // Spawn the hyprkvm move command asynchronously
-                                                let dir_string = dir_str.to_string();
-                                                tokio::spawn(async move {
-                                                    let _ = tokio::process::Command::new("hyprkvm")
-                                                        .args(["move", &dir_string])
-                                                        .output()
-                                                        .await;
-                                                });
-
-                                                recovery_triggered = true;
-                                                break 'recovery;
-                                            }
-                                        }
-                                    }
-                                    input::GrabEvent::KeyUp { keycode } => {
-                                        if keycode == 125 || keycode == 126 {
-                                            recovery_super_held = false;
-                                            tracing::debug!("Recovery: Super released");
-                                        }
-                                    }
-                                    _ => {
-                                        // Ignore mouse events during recovery
-                                    }
-                                }
-                            }
-
-                            // Brief sleep to avoid busy-looping
-                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                        }
-
-                        if recovery_triggered {
-                            // Don't release grab - the transfer will keep using it
-                            tracing::info!("Recovery succeeded - transfer triggered, keeping grab active");
-                        } else {
-                            // No keybind detected, release the grab normally
-                            tracing::info!("Recovery complete - releasing grab for local control");
-
-                            // Inject key-ups before releasing
-                            if let Some(dir) = was_capturing_direction {
-                                if input_emulator.is_none() {
-                                    if let Ok(emu) = input::InputEmulator::new() {
-                                        input_emulator = Some(emu);
-                                    }
-                                }
-                                if let Some(ref mut emu) = input_emulator {
-                                    let arrow_keycode = match dir {
-                                        Direction::Left => 105,
-                                        Direction::Right => 106,
-                                        Direction::Up => 103,
-                                        Direction::Down => 108,
-                                    };
-                                    emu.keyboard.key(arrow_keycode, hyprkvm_common::KeyState::Released);
-                                    emu.keyboard.reset_all_keys();
-                                }
-                            }
-
-                            // Release the evdev grab
-                            input_grabber.stop();
-
-                            // Drain any remaining events
-                            while input_grabber.try_recv().is_some() {}
                         }
                     }
                     transfer::TransferEvent::StartInjection { from } => {

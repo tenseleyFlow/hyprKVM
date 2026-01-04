@@ -11,5 +11,5 @@ pub mod grabber;
 
 pub use capture::{EdgeCapture, EdgeCaptureConfig, EdgeEvent, MonitorInfo};
 pub use emulation::InputEmulator;
-pub use evdev_grab::EvdevGrabber;
+pub use evdev_grab::{EvdevGrabber, send_synthetic_key_ups};
 pub use grabber::GrabEvent;

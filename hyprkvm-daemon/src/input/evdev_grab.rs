@@ -345,6 +345,53 @@ fn convert_event(ev: &evdev::InputEvent) -> Option<GrabEvent> {
     }
 }
 
+/// Send synthetic key-up events via uinput for specified keycodes.
+/// This creates a temporary virtual keyboard, sends the events, and destroys it.
+/// Used to clear stale key state in libinput after releasing the evdev grab.
+pub fn send_synthetic_key_ups(keycodes: &[u16]) -> Result<(), std::io::Error> {
+    use evdev::uinput::VirtualDeviceBuilder;
+    use evdev::{AttributeSet, Key};
+
+    if keycodes.is_empty() {
+        return Ok(());
+    }
+
+    tracing::debug!("Creating uinput device to send synthetic key-ups for {:?}", keycodes);
+
+    // Build the key set for all keys we might send
+    let mut keys = AttributeSet::<Key>::new();
+    for &keycode in keycodes {
+        keys.insert(Key::new(keycode));
+    }
+
+    // Also add common modifier keys in case we need them
+    keys.insert(Key::new(125)); // KEY_LEFTMETA
+    keys.insert(Key::new(126)); // KEY_RIGHTMETA
+
+    // Create a virtual keyboard device
+    let mut device = VirtualDeviceBuilder::new()?
+        .name("hyprkvm-synthetic")
+        .with_keys(&keys)?
+        .build()?;
+
+    // Brief pause to let the device be recognized
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Send key-up events for each keycode
+    for &keycode in keycodes {
+        let key_up = evdev::InputEvent::new(evdev::EventType::KEY, keycode, 0);
+        let syn = evdev::InputEvent::new(evdev::EventType::SYNCHRONIZATION, 0, 0);
+        device.emit(&[key_up, syn])?;
+        tracing::debug!("Sent synthetic key-up for keycode {}", keycode);
+    }
+
+    // Flush and brief pause before device is dropped
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    tracing::debug!("Synthetic key-ups sent successfully");
+    Ok(())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EvdevGrabError {
     #[error("No input devices found")]
