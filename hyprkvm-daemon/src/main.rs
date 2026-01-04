@@ -859,6 +859,37 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         info!("Stopping input capture");
                         capture_direction = None;
                         input_grabber.stop();
+
+                        // After ungrabbing, we need to reset modifier state in the compositor.
+                        // The compositor didn't see key-ups for modifiers that were released
+                        // while we had input grabbed. Send synthetic key-ups for all modifiers.
+                        if input_emulator.is_none() {
+                            match input::InputEmulator::new() {
+                                Ok(emu) => {
+                                    input_emulator = Some(emu);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to create emulator for modifier reset: {}", e);
+                                }
+                            }
+                        }
+                        if let Some(ref mut emu) = input_emulator {
+                            tracing::debug!("Sending modifier key-ups to reset compositor state");
+                            // Release all modifier keys
+                            const MODIFIER_KEYCODES: &[u32] = &[
+                                42,   // KEY_LEFTSHIFT
+                                54,   // KEY_RIGHTSHIFT
+                                29,   // KEY_LEFTCTRL
+                                97,   // KEY_RIGHTCTRL
+                                56,   // KEY_LEFTALT
+                                100,  // KEY_RIGHTALT
+                                125,  // KEY_LEFTMETA (Super)
+                                126,  // KEY_RIGHTMETA (Super)
+                            ];
+                            for &keycode in MODIFIER_KEYCODES {
+                                emu.keyboard.key(keycode, hyprkvm_common::KeyState::Released);
+                            }
+                        }
                     }
                     transfer::TransferEvent::StartInjection { from } => {
                         info!("Starting input injection from {:?}", from);
@@ -1107,12 +1138,10 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
     use hyprkvm_common::protocol::{IpcRequest, IpcResponse};
 
     let dir: Direction = direction.parse()?;
-    tracing::debug!("CLI: handle_move {:?}", dir);
 
     // Try to connect to daemon
     match ipc::IpcClient::connect().await {
         Ok(mut client) => {
-            tracing::debug!("CLI: connected to daemon");
             // Ask daemon to handle the move (it does movefocus internally)
             let request = IpcRequest::Move { direction: dir };
             match client.request(&request).await {
@@ -1120,8 +1149,7 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
                     tracing::info!("Transferred control to {}", to_machine);
                 }
                 Ok(IpcResponse::DoLocalMove) => {
-                    // Daemon already did movefocus, nothing more to do
-                    tracing::debug!("CLI: local move handled by daemon");
+                    // Daemon handled it
                 }
                 Ok(IpcResponse::Error { message }) => {
                     tracing::warn!("Daemon error: {}", message);
@@ -1130,7 +1158,7 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
                     tracing::warn!("Unexpected response from daemon");
                 }
                 Err(e) => {
-                    tracing::warn!("CLI: IPC request failed: {}, falling back to local", e);
+                    tracing::debug!("IPC request failed: {}, falling back to local", e);
                     do_local_move(dir).await?;
                 }
             }
