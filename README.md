@@ -1,4 +1,7 @@
 # HyprKVM
+(noun) : yer a wizard, 'arry
+
+### what?
 
 Hyprland-native software KVM switch that integrates with workspace navigation.
 
@@ -12,7 +15,7 @@ Hyprland-native software KVM switch that integrates with workspace navigation.
 
 ## Status
 
-🚧 **Early Development** - Sprint 0 in progress
+🚧 **Early Development** 
 
 ## Building
 
