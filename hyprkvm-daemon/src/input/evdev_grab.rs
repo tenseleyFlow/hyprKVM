@@ -71,29 +71,47 @@ impl EvdevGrabber {
 
 fn find_input_devices() -> Vec<PathBuf> {
     let mut devices = Vec::new();
+    let mut seen_paths = std::collections::HashSet::new();
 
-    // Look in /dev/input/by-id for keyboard and mouse devices
+    // Method 1: Look in /dev/input/by-id for keyboard and mouse devices
     if let Ok(entries) = fs::read_dir("/dev/input/by-id") {
         for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
+            let name = entry.file_name().to_string_lossy().to_lowercase();
             // Look for keyboard and mouse event devices (not hidraw)
-            if (name.contains("kbd") || name.contains("keyboard") ||
-                name.contains("mouse") || name.contains("Mouse")) &&
-               name.contains("event") {
+            if name.contains("event") &&
+               (name.contains("kbd") || name.contains("keyboard") ||
+                name.contains("mouse") || name.contains("pointer")) {
                 if let Ok(path) = entry.path().canonicalize() {
-                    devices.push(path);
+                    if seen_paths.insert(path.clone()) {
+                        devices.push(path);
+                    }
                 }
             }
         }
     }
 
-    // Fallback: scan /dev/input/event* directly
-    if devices.is_empty() {
-        if let Ok(entries) = fs::read_dir("/dev/input") {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("event") {
-                    devices.push(entry.path());
+    // Method 2: Scan all /dev/input/event* and check capabilities
+    if let Ok(entries) = fs::read_dir("/dev/input") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("event") {
+                let path = entry.path();
+                if seen_paths.contains(&path) {
+                    continue;
+                }
+
+                // Try to open and check if it's a keyboard or mouse
+                if let Ok(dev) = Device::open(&path) {
+                    let has_keys = dev.supported_keys().map(|k| k.iter().count() > 0).unwrap_or(false);
+                    let has_rel = dev.supported_relative_axes().map(|r| r.iter().count() > 0).unwrap_or(false);
+
+                    // Include if it has keys (keyboard) or relative axes (mouse)
+                    if has_keys || has_rel {
+                        let dev_name = dev.name().unwrap_or("unknown");
+                        tracing::debug!("Found input device: {} at {} (keys={}, rel={})",
+                            dev_name, path.display(), has_keys, has_rel);
+                        devices.push(path);
+                    }
                 }
             }
         }
@@ -112,30 +130,13 @@ fn run_evdev_grabber(
         return Err(EvdevGrabError::NoDevices);
     }
 
-    tracing::info!("Found {} input devices", device_paths.len());
+    tracing::info!("Found {} input device paths", device_paths.len());
     for path in &device_paths {
         tracing::debug!("  {}", path.display());
     }
 
-    // Open all devices
+    // We'll open and grab devices fresh each time we activate
     let mut devices: HashMap<PathBuf, Device> = HashMap::new();
-    for path in &device_paths {
-        match Device::open(path) {
-            Ok(dev) => {
-                let name = dev.name().unwrap_or("unknown");
-                tracing::info!("Opened input device: {} ({})", name, path.display());
-                devices.insert(path.clone(), dev);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to open {}: {}", path.display(), e);
-            }
-        }
-    }
-
-    if devices.is_empty() {
-        return Err(EvdevGrabError::NoDevices);
-    }
-
     let mut grabbed = false;
     let mut last_active = false;
 
@@ -147,32 +148,56 @@ fn run_evdev_grabber(
             last_active = is_active;
 
             if is_active {
-                // Grab all devices
-                tracing::info!("Grabbing {} input devices", devices.len());
-                for (path, dev) in &mut devices {
-                    if let Err(e) = dev.grab() {
-                        tracing::error!("Failed to grab {}: {}", path.display(), e);
-                    } else {
-                        tracing::debug!("Grabbed {}", path.display());
+                // Open and grab all devices fresh
+                devices.clear();
+                tracing::info!("Opening and grabbing input devices...");
+
+                for path in &device_paths {
+                    match Device::open(path) {
+                        Ok(mut dev) => {
+                            let name = dev.name().unwrap_or("unknown").to_string();
+
+                            // Try to grab immediately after opening
+                            match dev.grab() {
+                                Ok(()) => {
+                                    tracing::info!("Grabbed: {} ({})", name, path.display());
+                                    devices.insert(path.clone(), dev);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Cannot grab {} ({}): {}", name, path.display(), e);
+                                    // Don't add to devices if we can't grab
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to open {}: {}", path.display(), e);
+                        }
                     }
+                }
+
+                if devices.is_empty() {
+                    tracing::error!("Failed to grab any input devices!");
+                } else {
+                    tracing::info!("Successfully grabbed {} devices", devices.len());
                 }
                 grabbed = true;
             } else {
-                // Ungrab all devices
-                tracing::info!("Ungrabbing input devices");
-                for (path, dev) in &mut devices {
+                // Ungrab and close all devices
+                tracing::info!("Releasing {} input devices", devices.len());
+                for (path, mut dev) in devices.drain() {
                     if let Err(e) = dev.ungrab() {
-                        tracing::error!("Failed to ungrab {}: {}", path.display(), e);
+                        tracing::warn!("Failed to ungrab {}: {}", path.display(), e);
                     } else {
-                        tracing::debug!("Ungrabbed {}", path.display());
+                        tracing::debug!("Released {}", path.display());
                     }
+                    // Device is dropped here, closing the fd
                 }
                 grabbed = false;
             }
         }
 
         // Read events if grabbed
-        if grabbed {
+        if grabbed && !devices.is_empty() {
             for (_path, dev) in &mut devices {
                 // Non-blocking read
                 if let Ok(events) = dev.fetch_events() {
