@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "hyprkvm-cli"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "hyprkvm-common"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "hyprkvm-daemon"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "base64",
