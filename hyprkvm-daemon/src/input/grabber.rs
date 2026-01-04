@@ -199,9 +199,10 @@ fn run_grabber(
         .roundtrip(&mut state)
         .map_err(|e| GrabberError::Dispatch(e.to_string()))?;
 
-    // Create shm pool for buffers
+    // Create shm pool for buffers - needs to be large enough for fullscreen
+    // 4K display = 3840x2160x4 = ~33MB, allocate 64MB to be safe
     state.pool = Some(
-        SlotPool::new(256 * 256 * 4, &state.shm_state)
+        SlotPool::new(64 * 1024 * 1024, &state.shm_state)
             .map_err(|e| GrabberError::Protocol(format!("pool: {}", e)))?,
     );
 
@@ -217,12 +218,12 @@ fn run_grabber(
             Some(&output),
         );
 
-        // Configure for input grab - use 1x1 transparent surface
-        // Must cover enough area to grab input properly
+        // Configure for input grab - fullscreen transparent surface
+        // With all anchors and size 0,0, compositor will expand to fill output
         layer.set_anchor(Anchor::all());
         layer.set_exclusive_zone(-1); // Don't push other windows
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-        layer.set_size(1, 1); // Minimal size, will expand to fill
+        layer.set_size(0, 0); // Let compositor determine size (fullscreen)
 
         layer.commit();
         state.layer_surface = Some(layer);
