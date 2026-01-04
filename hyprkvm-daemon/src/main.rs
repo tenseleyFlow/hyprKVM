@@ -936,35 +936,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let current_state = transfer_manager.state().await;
                         tracing::debug!("IPC Move {:?}: state={:?}", direction, current_state);
 
-                        // FIRST: Check if we're returning control to the source machine.
-                        // This takes priority over edge detection - if we received control
-                        // from direction X and user wants to go direction X, always return.
-                        if let transfer::TransferState::ReceivedControl { from, .. } = &current_state {
-                            if *from == direction {
-                                // Check if we have a peer in this direction
-                                let has_peer = {
-                                    let peers = peers.read().await;
-                                    peers.contains_key(&direction)
-                                };
-                                let neighbor_name = config.machines.neighbors
-                                    .iter()
-                                    .find(|n| n.direction == direction)
-                                    .map(|n| n.name.clone());
-
-                                if has_peer && neighbor_name.is_some() {
-                                    tracing::info!("Keyboard return: returning control to {:?}", direction);
-                                    let resp = if let Err(e) = transfer_manager.return_control().await {
-                                        tracing::warn!("Failed to return control: {}", e);
-                                        IpcResponse::Error { message: format!("Return failed: {}", e) }
-                                    } else {
-                                        IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
-                                    };
-                                    let _ = response_tx.send(resp);
-                                    continue;
-                                }
-                            }
-                        }
-
                         // For keyboard navigation, check if we're at the absolute edge:
                         // 1. On edge monitor (no monitor in that direction)
                         // 2. On edge window of that monitor (no window further in that direction)
@@ -1049,22 +1020,53 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                         tracing::debug!("IPC Move {:?}: at_edge={}, has_peer={}", direction, at_edge, has_peer);
 
-                        // At edge with peer: initiate transfer
-                        // (Return control case was already handled above)
+                        // At edge with peer: either return control or initiate transfer
                         if at_edge && has_peer && neighbor_name.is_some() {
-                            let cursor_pos = hypr_client.cursor_pos().await
-                                .map(|c| (c.x, c.y))
-                                .unwrap_or((0, 0));
+                            // Check if we're in ReceivedControl state from this direction
+                            if let transfer::TransferState::ReceivedControl { from, .. } = current_state {
+                                if from == direction {
+                                    // Return control to source machine
+                                    tracing::info!("Keyboard return: at edge, returning control to {:?}", direction);
+                                    if let Err(e) = transfer_manager.return_control().await {
+                                        tracing::warn!("Failed to return control: {}", e);
+                                        IpcResponse::Error { message: format!("Return failed: {}", e) }
+                                    } else {
+                                        IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
+                                    }
+                                } else {
+                                    // At edge with peer but received control from different direction
+                                    // Initiate new transfer
+                                    let cursor_pos = hypr_client.cursor_pos().await
+                                        .map(|c| (c.x, c.y))
+                                        .unwrap_or((0, 0));
 
-                            if let Err(e) = transfer_manager.initiate_transfer(
-                                direction,
-                                cursor_pos,
-                                screen_height,
-                                screen_width,
-                            ).await {
-                                IpcResponse::Error { message: format!("Transfer failed: {}", e) }
+                                    if let Err(e) = transfer_manager.initiate_transfer(
+                                        direction,
+                                        cursor_pos,
+                                        screen_height,
+                                        screen_width,
+                                    ).await {
+                                        IpcResponse::Error { message: format!("Transfer failed: {}", e) }
+                                    } else {
+                                        IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
+                                    }
+                                }
                             } else {
-                                IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
+                                // Not in ReceivedControl - initiate new transfer
+                                let cursor_pos = hypr_client.cursor_pos().await
+                                    .map(|c| (c.x, c.y))
+                                    .unwrap_or((0, 0));
+
+                                if let Err(e) = transfer_manager.initiate_transfer(
+                                    direction,
+                                    cursor_pos,
+                                    screen_height,
+                                    screen_width,
+                                ).await {
+                                    IpcResponse::Error { message: format!("Transfer failed: {}", e) }
+                                } else {
+                                    IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
+                                }
                             }
                         } else {
                             // Either not at edge, or at edge but no peer - do local movefocus
