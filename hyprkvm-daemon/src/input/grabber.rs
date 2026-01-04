@@ -9,7 +9,7 @@ use std::thread;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
-    delegate_registry, delegate_seat,
+    delegate_registry, delegate_seat, delegate_shm,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -25,10 +25,11 @@ use smithay_client_toolkit::{
         },
         WaylandSurface,
     },
+    shm::{slot::SlotPool, Shm, ShmHandler},
 };
 use wayland_client::{
     globals::registry_queue_init,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_surface},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
     Connection, QueueHandle,
 };
 
@@ -165,6 +166,9 @@ fn run_grabber(
 
     let qh = event_queue.handle();
 
+    let shm_state = Shm::bind(&globals, &qh)
+        .map_err(|e| GrabberError::Protocol(format!("shm: {}", e)))?;
+
     let mut state = GrabberState {
         active,
         event_tx,
@@ -175,6 +179,8 @@ fn run_grabber(
             .map_err(|e| GrabberError::Protocol(e.to_string()))?,
         layer_shell: LayerShell::bind(&globals, &qh)
             .map_err(|e| GrabberError::Protocol(e.to_string()))?,
+        shm_state,
+        pool: None,
 
         layer_surface: None,
         keyboard: None,
@@ -182,12 +188,22 @@ fn run_grabber(
         last_pointer_pos: (0.0, 0.0),
         configured: false,
         running: true,
+        surface_width: 1,
+        surface_height: 1,
+        is_mapped: false,
+        was_active: false,
     };
 
     // Wait for first output
     event_queue
         .roundtrip(&mut state)
         .map_err(|e| GrabberError::Dispatch(e.to_string()))?;
+
+    // Create shm pool for buffers
+    state.pool = Some(
+        SlotPool::new(256 * 256 * 4, &state.shm_state)
+            .map_err(|e| GrabberError::Protocol(format!("pool: {}", e)))?,
+    );
 
     // Create grabber surface (invisible fullscreen layer)
     if let Some(output) = state.output_state.outputs().next() {
@@ -201,25 +217,52 @@ fn run_grabber(
             Some(&output),
         );
 
-        // Configure for input grab
+        // Configure for input grab - use 1x1 transparent surface
+        // Must cover enough area to grab input properly
         layer.set_anchor(Anchor::all());
         layer.set_exclusive_zone(-1); // Don't push other windows
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
-        layer.set_size(1, 1); // Minimal size, invisible
+        layer.set_size(1, 1); // Minimal size, will expand to fill
 
         layer.commit();
         state.layer_surface = Some(layer);
     }
 
-    // Main loop
+    // Another roundtrip to process configure
+    event_queue
+        .roundtrip(&mut state)
+        .map_err(|e| GrabberError::Dispatch(e.to_string()))?;
+
+    tracing::info!("Input grabber initialized, waiting for activation");
+
+    // Main loop - poll active flag and manage surface
     loop {
         if !state.running {
             break;
         }
 
+        // Check if active state changed
+        let is_active = state.active.load(Ordering::SeqCst);
+        if is_active != state.was_active {
+            state.was_active = is_active;
+            state.update_surface_mapping(is_active);
+        }
+
+        // Use dispatch with timeout to allow periodic checking of active flag
         event_queue
-            .blocking_dispatch(&mut state)
+            .dispatch_pending(&mut state)
             .map_err(|e| GrabberError::Dispatch(e.to_string()))?;
+
+        // Flush and prepare read
+        if let Some(guard) = event_queue
+            .prepare_read()
+        {
+            // Read events with timeout (50ms)
+            let _ = guard.read();
+        }
+
+        // Small sleep to avoid busy-looping
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 
     Ok(())
@@ -233,6 +276,8 @@ struct GrabberState {
     output_state: OutputState,
     compositor_state: CompositorState,
     layer_shell: LayerShell,
+    shm_state: Shm,
+    pool: Option<SlotPool>,
 
     layer_surface: Option<LayerSurface>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -240,6 +285,12 @@ struct GrabberState {
     last_pointer_pos: (f64, f64),
     configured: bool,
     running: bool,
+    surface_width: u32,
+    surface_height: u32,
+    /// Track if surface is currently mapped (has buffer attached)
+    is_mapped: bool,
+    /// Last known active state - for detecting transitions
+    was_active: bool,
 }
 
 impl CompositorHandler for GrabberState {
@@ -309,14 +360,136 @@ impl LayerShellHandler for GrabberState {
         _: &Connection,
         _qh: &QueueHandle<Self>,
         layer: &LayerSurface,
-        _configure: LayerSurfaceConfigure,
+        configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if !self.configured {
-            self.configured = true;
-            // Commit to acknowledge the configure
+        // Update size from configure event
+        if configure.new_size.0 > 0 {
+            self.surface_width = configure.new_size.0;
+        }
+        if configure.new_size.1 > 0 {
+            self.surface_height = configure.new_size.1;
+        }
+
+        self.configured = true;
+
+        // Only map surface (attach buffer) if we're currently active
+        // Otherwise just acknowledge the configure by committing without a buffer
+        if self.active.load(Ordering::SeqCst) {
+            self.draw_surface(layer);
+            self.is_mapped = true;
+        } else {
+            // Commit without buffer - surface won't be mapped but config is ack'd
             layer.commit();
         }
+
+        tracing::debug!(
+            "Grabber surface configured: {}x{}, mapped: {}",
+            self.surface_width,
+            self.surface_height,
+            self.is_mapped
+        );
+    }
+}
+
+impl GrabberState {
+    fn update_surface_mapping(&mut self, should_map: bool) {
+        // Clone the wl_surface to avoid borrow issues
+        let wl_surface = match &self.layer_surface {
+            Some(l) => l.wl_surface().clone(),
+            None => return,
+        };
+
+        if should_map {
+            tracing::info!("Grabber activating - mapping surface");
+
+            let pool = match &mut self.pool {
+                Some(pool) => pool,
+                None => {
+                    tracing::warn!("No SHM pool available for drawing");
+                    return;
+                }
+            };
+
+            let width = self.surface_width;
+            let height = self.surface_height;
+            let stride = width * 4;
+
+            let (buffer, canvas) = match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride as i32,
+                wl_shm::Format::Argb8888,
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    tracing::error!("Failed to create buffer: {:?}", e);
+                    return;
+                }
+            };
+
+            // Fill with fully transparent pixels (ARGB = 0x00000000)
+            canvas.fill(0);
+
+            // Attach buffer to surface
+            wl_surface.attach(Some(buffer.wl_buffer()), 0, 0);
+            wl_surface.damage_buffer(0, 0, width as i32, height as i32);
+            wl_surface.commit();
+
+            tracing::debug!("Attached {}x{} transparent buffer to grabber surface", width, height);
+            self.is_mapped = true;
+        } else {
+            tracing::info!("Grabber deactivating - unmapping surface");
+            // Unmap by attaching null buffer
+            wl_surface.attach(None, 0, 0);
+            wl_surface.commit();
+            self.is_mapped = false;
+        }
+    }
+
+    fn draw_surface(&mut self, layer: &LayerSurface) {
+        let wl_surface = layer.wl_surface().clone();
+
+        let pool = match &mut self.pool {
+            Some(pool) => pool,
+            None => {
+                tracing::warn!("No SHM pool available for drawing");
+                return;
+            }
+        };
+
+        let width = self.surface_width;
+        let height = self.surface_height;
+        let stride = width * 4;
+
+        let (buffer, canvas) = match pool.create_buffer(
+            width as i32,
+            height as i32,
+            stride as i32,
+            wl_shm::Format::Argb8888,
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::error!("Failed to create buffer: {:?}", e);
+                return;
+            }
+        };
+
+        // Fill with fully transparent pixels (ARGB = 0x00000000)
+        canvas.fill(0);
+
+        // Attach buffer to surface
+        wl_surface.attach(Some(buffer.wl_buffer()), 0, 0);
+        wl_surface.damage_buffer(0, 0, width as i32, height as i32);
+        layer.commit();
+
+        tracing::debug!("Attached {}x{} transparent buffer to grabber surface", width, height);
+    }
+}
+
+impl ShmHandler for GrabberState {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm_state
     }
 }
 
@@ -504,6 +677,7 @@ delegate_seat!(GrabberState);
 delegate_keyboard!(GrabberState);
 delegate_pointer!(GrabberState);
 delegate_layer!(GrabberState);
+delegate_shm!(GrabberState);
 delegate_registry!(GrabberState);
 
 #[derive(Debug, thiserror::Error)]
