@@ -183,6 +183,16 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     let mut capture_direction: Option<Direction> = None;
     let mut input_sequence: u64 = 0;
 
+    // Escape key detection
+    // KEY_SCROLLLOCK = 70 in Linux evdev keycodes
+    const KEY_SCROLLLOCK: u32 = 70;
+    const KEY_LEFTSHIFT: u32 = 42;
+    const KEY_RIGHTSHIFT: u32 = 54;
+    let mut shift_tap_times: Vec<std::time::Instant> = Vec::new();
+    let triple_tap_window = std::time::Duration::from_millis(
+        config.input.escape_hotkey.triple_tap_window_ms
+    );
+
     // Cursor-based edge detection state
     let mut last_cursor_pos: Option<(i32, i32)> = None;
     let mut edge_dwell_start: Option<(Direction, std::time::Instant)> = None;
@@ -328,7 +338,39 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
             _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
                 // Forward grabbed input to remote peer
                 if let Some(cap_dir) = capture_direction {
+                    let mut should_escape = false;
+
                     while let Some(grab_event) = input_grabber.try_recv() {
+                        // Check for escape key before forwarding
+                        match &grab_event {
+                            input::GrabEvent::KeyDown { keycode } => {
+                                // Check for scroll_lock
+                                if *keycode == KEY_SCROLLLOCK {
+                                    info!("Scroll Lock pressed - returning control to local");
+                                    should_escape = true;
+                                    continue; // Don't forward this key
+                                }
+
+                                // Check for triple-tap shift
+                                if config.input.escape_hotkey.triple_tap_enabled {
+                                    if *keycode == KEY_LEFTSHIFT || *keycode == KEY_RIGHTSHIFT {
+                                        let now = std::time::Instant::now();
+                                        // Remove old taps outside the window
+                                        shift_tap_times.retain(|t| now.duration_since(*t) < triple_tap_window);
+                                        shift_tap_times.push(now);
+
+                                        if shift_tap_times.len() >= 3 {
+                                            info!("Triple-tap Shift detected - returning control to local");
+                                            should_escape = true;
+                                            shift_tap_times.clear();
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+
                         let payload = grab_event.to_protocol(input_sequence);
                         input_sequence += 1;
 
@@ -337,6 +379,27 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         if let Some(peer) = peers.get_mut(&cap_dir) {
                             if let Err(e) = peer.send(&msg).await {
                                 tracing::error!("Failed to send input event: {}", e);
+                            }
+                        }
+                    }
+
+                    // If escape was triggered, stop capture and send Leave
+                    if should_escape {
+                        info!("Escape triggered - stopping capture");
+                        capture_direction = None;
+                        input_grabber.stop();
+
+                        // Send Leave message - we're leaving in the opposite direction (returning to us)
+                        let leave = Message::Leave(hyprkvm_common::protocol::LeavePayload {
+                            to_direction: cap_dir.opposite(),
+                            cursor_pos: hyprkvm_common::protocol::CursorEntryPos::EdgeRelative(0.5),
+                            modifiers: hyprkvm_common::ModifierState::default(),
+                            transfer_id: input_sequence, // Use as a simple unique ID
+                        });
+                        let mut peers = peers.write().await;
+                        if let Some(peer) = peers.get_mut(&cap_dir) {
+                            if let Err(e) = peer.send(&leave).await {
+                                tracing::error!("Failed to send Leave: {}", e);
                             }
                         }
                     }

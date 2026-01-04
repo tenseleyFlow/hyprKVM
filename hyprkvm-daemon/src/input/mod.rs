@@ -10,4 +10,4 @@ pub mod grabber;
 
 pub use capture::{EdgeCapture, EdgeCaptureConfig, EdgeEvent};
 pub use emulation::InputEmulator;
-pub use grabber::{InputGrabber, InputGrabberConfig};
+pub use grabber::{GrabEvent, InputGrabber, InputGrabberConfig};
