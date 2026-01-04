@@ -162,9 +162,17 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
     // Start edge capture
     info!("Starting edge capture for: {:?}", enabled_edges);
+    let monitor_infos: Vec<input::MonitorInfo> = monitors.iter().map(|m| input::MonitorInfo {
+        name: m.name.clone(),
+        x: m.x,
+        y: m.y,
+        width: m.width,
+        height: m.height,
+    }).collect();
     let edge_capture = input::EdgeCapture::new(input::EdgeCaptureConfig {
         barrier_size: 1,
         enabled_edges: enabled_edges.clone(),
+        monitors: monitor_infos,
     })?;
 
     // Create input grabber (for when we send control elsewhere)
@@ -200,6 +208,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     let mut edge_dwell_start: Option<(Direction, std::time::Instant)> = None;
     const EDGE_THRESHOLD: i32 = 2; // Pixels from edge to count as "at edge"
     const EDGE_DWELL_MS: u64 = 50; // How long cursor must be at edge to trigger
+
+    // Cooldown after control returns to prevent immediate bounce-back
+    let mut last_control_return: Option<std::time::Instant> = None;
+    const CONTROL_RETURN_COOLDOWN_MS: u64 = 500; // 500ms cooldown after control returns
 
     // Connection storage: direction -> peer connection
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
@@ -566,6 +578,14 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             }
                         }
 
+                        // Check cooldown to prevent bounce-back loops
+                        if let Some(last_return) = last_control_return {
+                            if last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128 {
+                                tracing::debug!("EDGE: {:?} - in cooldown, ignoring", direction);
+                                continue;
+                            }
+                        }
+
                         info!(
                             "EDGE: {:?} at ({}, {}) - initiating transfer",
                             direction,
@@ -649,6 +669,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                             if let Err(e) = transfer_manager.return_control().await {
                                                                 tracing::warn!("Failed to return control: {}", e);
                                                             }
+                                                            edge_dwell_start = None;
+                                                            continue;
+                                                        }
+                                                    }
+
+                                                    // Check cooldown to prevent bounce-back
+                                                    if let Some(last_return) = last_control_return {
+                                                        if last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128 {
+                                                            tracing::debug!("CURSOR EDGE: {:?} - in cooldown", edge_dir);
                                                             edge_dwell_start = None;
                                                             continue;
                                                         }
@@ -763,6 +792,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                             // Usually a benign race condition
                                             tracing::debug!("Failed to handle Leave: {}", e);
                                         }
+                                        // Set cooldown to prevent bounce-back loop
+                                        // When we receive Leave, control is returning to us
+                                        last_control_return = Some(std::time::Instant::now());
+                                        tracing::debug!("Set control return cooldown");
                                     }
                                     Message::LeaveAck => {
                                         info!("Received LeaveAck");

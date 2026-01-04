@@ -41,6 +41,16 @@ pub struct EdgeEvent {
     pub timestamp: Instant,
 }
 
+/// Monitor info from Hyprland
+#[derive(Debug, Clone)]
+pub struct MonitorInfo {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Configuration for edge barriers
 #[derive(Debug, Clone)]
 pub struct EdgeCaptureConfig {
@@ -48,6 +58,8 @@ pub struct EdgeCaptureConfig {
     pub barrier_size: u32,
     /// Which edges to create barriers on
     pub enabled_edges: Vec<Direction>,
+    /// Monitor positions from Hyprland (used instead of Wayland output positions)
+    pub monitors: Vec<MonitorInfo>,
 }
 
 impl Default for EdgeCaptureConfig {
@@ -60,6 +72,7 @@ impl Default for EdgeCaptureConfig {
                 Direction::Up,
                 Direction::Down,
             ],
+            monitors: Vec::new(),
         }
     }
 }
@@ -108,13 +121,103 @@ struct OutputInfo {
 }
 
 impl EdgeCaptureState {
+    /// Update output positions from Hyprland monitor info
+    fn update_output_positions(&mut self) {
+        // Hyprland reports physical resolution, Wayland reports logical (after scaling)
+        // We need to match by finding monitors whose logical size matches the wayland output
+        // Logical size = physical size / scale
+
+        let mut used_monitors: Vec<bool> = vec![false; self.config.monitors.len()];
+
+        // First pass: try to find unique matches
+        for out in &mut self.outputs {
+            // Find monitors that could match this output size (considering possible scales)
+            let mut candidates: Vec<usize> = Vec::new();
+            for (i, mon) in self.config.monitors.iter().enumerate() {
+                if used_monitors[i] {
+                    continue;
+                }
+                // Check if sizes match directly
+                if mon.width == out.width && mon.height == out.height {
+                    candidates.push(i);
+                    continue;
+                }
+                // Check common scale factors (1.5, 2.0)
+                for scale in [1.5_f64, 2.0_f64] {
+                    let scaled_w = (mon.width as f64 / scale).round() as u32;
+                    let scaled_h = (mon.height as f64 / scale).round() as u32;
+                    if scaled_w == out.width && scaled_h == out.height {
+                        candidates.push(i);
+                        break;
+                    }
+                }
+            }
+
+            // If exactly one candidate, use it
+            if candidates.len() == 1 {
+                let i = candidates[0];
+                let mon = &self.config.monitors[i];
+                tracing::info!("Matched output {}x{} to monitor {} at ({}, {})",
+                    out.width, out.height, mon.name, mon.x, mon.y);
+                out.x = mon.x;
+                out.y = mon.y;
+                used_monitors[i] = true;
+            } else if candidates.len() > 1 {
+                tracing::debug!("Multiple candidates for output {}x{}: {:?}",
+                    out.width, out.height,
+                    candidates.iter().map(|&i| &self.config.monitors[i].name).collect::<Vec<_>>());
+            }
+        }
+
+        // Second pass: assign remaining outputs to remaining monitors by order
+        for out in &mut self.outputs {
+            if out.x != 0 || out.y != 0 {
+                continue; // Already assigned
+            }
+            // Find first unused monitor that could match
+            for (i, mon) in self.config.monitors.iter().enumerate() {
+                if used_monitors[i] {
+                    continue;
+                }
+                // Check all possible scales
+                let matches = (mon.width == out.width && mon.height == out.height)
+                    || [1.5_f64, 2.0_f64].iter().any(|&scale| {
+                        let scaled_w = (mon.width as f64 / scale).round() as u32;
+                        let scaled_h = (mon.height as f64 / scale).round() as u32;
+                        scaled_w == out.width && scaled_h == out.height
+                    });
+                if matches {
+                    tracing::info!("Assigned remaining output {}x{} to monitor {} at ({}, {})",
+                        out.width, out.height, mon.name, mon.x, mon.y);
+                    out.x = mon.x;
+                    out.y = mon.y;
+                    used_monitors[i] = true;
+                    break;
+                }
+            }
+        }
+    }
+
     fn create_barriers(&mut self, qh: &QueueHandle<Self>) {
+        // Update positions from Hyprland before creating barriers
+        self.update_output_positions();
+
+        // Log current outputs for debugging
+        tracing::info!("Creating barriers with {} outputs:", self.outputs.len());
+        for out in &self.outputs {
+            tracing::info!("  Output at ({}, {}) size {}x{}", out.x, out.y, out.width, out.height);
+        }
+
         // Get total screen bounds
         let (min_x, min_y, max_x, max_y) = self.screen_bounds();
+        tracing::info!("Screen bounds: ({}, {}) to ({}, {})", min_x, min_y, max_x, max_y);
 
         for direction in &self.config.enabled_edges.clone() {
             // Find the correct output for this edge direction
             let target_output = self.find_edge_output(*direction);
+            tracing::info!("  {:?} edge -> output at {:?}",
+                direction,
+                target_output.as_ref().map(|o| (o.x, o.y, o.width, o.height)));
 
             let (width, height, anchor) = match direction {
                 Direction::Left => (
@@ -641,8 +744,13 @@ fn run_capture_loop(
         last_trigger_time: std::collections::HashMap::new(),
     };
 
-    // Initial roundtrip to get outputs
+    // Multiple roundtrips to ensure all output info is received
+    // Output geometry comes in separate events that may need multiple roundtrips
     event_queue.roundtrip(&mut state).map_err(|e| EdgeCaptureError::Dispatch(e.to_string()))?;
+    event_queue.roundtrip(&mut state).map_err(|e| EdgeCaptureError::Dispatch(e.to_string()))?;
+    event_queue.roundtrip(&mut state).map_err(|e| EdgeCaptureError::Dispatch(e.to_string()))?;
+
+    tracing::info!("After roundtrips: {} outputs detected", state.outputs.len());
 
     // Create shm pool for buffers
     state.pool = Some(
