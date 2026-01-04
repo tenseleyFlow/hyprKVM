@@ -300,6 +300,22 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         info!("TLS is disabled (plain TCP mode for backwards compatibility)");
     }
 
+    // Load known hosts for TOFU
+    let known_hosts_path = network::KnownHosts::default_path();
+    let known_hosts = match network::KnownHosts::load(&known_hosts_path) {
+        Ok(kh) => {
+            if !kh.hosts.is_empty() {
+                info!("Loaded {} known host(s) from {:?}", kh.hosts.len(), known_hosts_path);
+            }
+            Arc::new(RwLock::new(kh))
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load known hosts: {}, starting fresh", e);
+            Arc::new(RwLock::new(network::KnownHosts::default()))
+        }
+    };
+    let tofu_enabled = config.network.tls.tofu;
+
     // Start network server
     let listen_addr: SocketAddr = format!("0.0.0.0:{}", config.network.listen_port).parse()?;
     let server = if tls_enabled {
@@ -315,6 +331,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     let machine_name = config.machines.self_name.clone();
     let neighbors_for_accept = config.machines.neighbors.clone();
     let peers_for_accept = peers.clone();
+    let known_hosts_for_accept = known_hosts.clone();
+    let known_hosts_path_for_accept = known_hosts_path.clone();
     let accept_handle = tokio::spawn(async move {
         loop {
             match server.accept().await {
@@ -326,6 +344,36 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     match conn.recv().await {
                         Ok(Some(Message::Hello(hello))) => {
                             info!("Peer {} connected (protocol v{})", hello.machine_name, hello.protocol_version);
+
+                            // Verify TLS fingerprint if this is a TLS connection
+                            if let Some(peer_fp) = conn.peer_fingerprint() {
+                                let mut kh = known_hosts_for_accept.write().await;
+                                match kh.is_trusted(&hello.machine_name, peer_fp) {
+                                    network::TrustStatus::Trusted => {
+                                        info!("Peer {} fingerprint verified", hello.machine_name);
+                                        kh.touch(&hello.machine_name);
+                                    }
+                                    network::TrustStatus::Unknown => {
+                                        if tofu_enabled {
+                                            info!("TOFU: Trusting new peer {} with fingerprint {}", hello.machine_name, peer_fp);
+                                            kh.trust_host(&hello.machine_name, peer_fp);
+                                            if let Err(e) = kh.save(&known_hosts_path_for_accept) {
+                                                tracing::error!("Failed to save known hosts: {}", e);
+                                            }
+                                        } else {
+                                            tracing::warn!("Unknown peer {} fingerprint and TOFU disabled, rejecting", hello.machine_name);
+                                            continue;
+                                        }
+                                    }
+                                    network::TrustStatus::Changed { old_fingerprint, new_fingerprint } => {
+                                        tracing::error!(
+                                            "SECURITY WARNING: Peer {} fingerprint CHANGED!\n  Old: {}\n  New: {}\n  This could indicate a man-in-the-middle attack!",
+                                            hello.machine_name, old_fingerprint, new_fingerprint
+                                        );
+                                        continue; // Reject the connection
+                                    }
+                                }
+                            }
 
                             // Send HelloAck
                             let ack = Message::HelloAck(hyprkvm_common::protocol::HelloAckPayload {
@@ -393,6 +441,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         let use_tls = neighbor.tls.unwrap_or(tls_enabled);
         let fingerprint = neighbor.fingerprint.clone();
         let tofu_enabled = config.network.tls.tofu;
+        let known_hosts_clone = known_hosts.clone();
+        let known_hosts_path_clone = known_hosts_path.clone();
 
         tokio::spawn(async move {
             loop {
@@ -440,6 +490,38 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         match conn.recv().await {
                             Ok(Some(Message::HelloAck(ack))) => {
                                 if ack.accepted {
+                                    // Verify TLS fingerprint if this is a TLS connection
+                                    if let Some(peer_fp) = conn.peer_fingerprint() {
+                                        let mut kh = known_hosts_clone.write().await;
+                                        match kh.is_trusted(&neighbor_name, peer_fp) {
+                                            network::TrustStatus::Trusted => {
+                                                info!("Peer {} fingerprint verified", neighbor_name);
+                                                kh.touch(&neighbor_name);
+                                            }
+                                            network::TrustStatus::Unknown => {
+                                                if tofu_enabled {
+                                                    info!("TOFU: Trusting new peer {} with fingerprint {}", neighbor_name, peer_fp);
+                                                    kh.trust_host(&neighbor_name, peer_fp);
+                                                    if let Err(e) = kh.save(&known_hosts_path_clone) {
+                                                        tracing::error!("Failed to save known hosts: {}", e);
+                                                    }
+                                                } else {
+                                                    tracing::warn!("Unknown peer {} fingerprint and TOFU disabled, rejecting", neighbor_name);
+                                                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                                    continue;
+                                                }
+                                            }
+                                            network::TrustStatus::Changed { old_fingerprint, new_fingerprint } => {
+                                                tracing::error!(
+                                                    "SECURITY WARNING: Peer {} fingerprint CHANGED!\n  Old: {}\n  New: {}\n  This could indicate a man-in-the-middle attack!",
+                                                    neighbor_name, old_fingerprint, new_fingerprint
+                                                );
+                                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                                                continue; // Reject and retry
+                                            }
+                                        }
+                                    }
+
                                     let mut peers = peers_clone.write().await;
                                     if peers.contains_key(&direction) {
                                         info!("Already have connection for {:?}, dropping outbound to {}", direction, ack.machine_name);
