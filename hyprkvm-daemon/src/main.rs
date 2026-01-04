@@ -20,6 +20,31 @@ mod transfer;
 
 use config::Config;
 
+/// Convert keycode to human-readable name for logging
+fn keycode_to_name(keycode: u32) -> &'static str {
+    match keycode {
+        1 => "ESC",
+        14 => "BACKSPACE",
+        15 => "TAB",
+        28 => "ENTER",
+        29 => "LEFTCTRL",
+        42 => "LEFTSHIFT",
+        54 => "RIGHTSHIFT",
+        56 => "LEFTALT",
+        57 => "SPACE",
+        58 => "CAPSLOCK",
+        97 => "RIGHTCTRL",
+        100 => "RIGHTALT",
+        103 => "UP",
+        105 => "LEFT",
+        106 => "RIGHT",
+        108 => "DOWN",
+        125 => "LEFTMETA",
+        126 => "RIGHTMETA",
+        _ => "OTHER",
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "hyprkvm")]
 #[command(about = "Hyprland-native software KVM switch")]
@@ -448,6 +473,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         // Check for escape key before forwarding
                         match &grab_event {
                             input::GrabEvent::KeyDown { keycode } => {
+                                tracing::debug!("CAPTURE KeyDown: keycode={} ({})",
+                                    keycode, keycode_to_name(*keycode));
+
                                 // Check for scroll_lock
                                 if *keycode == KEY_SCROLLLOCK {
                                     info!("Scroll Lock pressed - returning control to local");
@@ -473,7 +501,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 }
                                 other_events.push(grab_event);
                             }
-                            input::GrabEvent::KeyUp { .. } => {
+                            input::GrabEvent::KeyUp { keycode } => {
+                                tracing::debug!("CAPTURE KeyUp: keycode={} ({})",
+                                    keycode, keycode_to_name(*keycode));
                                 other_events.push(grab_event);
                             }
                             input::GrabEvent::PointerMotion { dx, dy } => {
@@ -802,15 +832,18 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         // Transfer complete
                                     }
                                     Message::InputEvent(input_payload) => {
-                                        tracing::trace!("Received input event: {:?}", input_payload);
                                         // Inject input via emulation module
                                         if let Some(ref mut emu) = input_emulator {
                                             use hyprkvm_common::protocol::InputEventType;
                                             match input_payload.event {
                                                 InputEventType::KeyDown { keycode } => {
+                                                    tracing::debug!("RECV KeyDown: keycode={} ({})",
+                                                        keycode, keycode_to_name(keycode));
                                                     emu.keyboard.key(keycode, hyprkvm_common::KeyState::Pressed);
                                                 }
                                                 InputEventType::KeyUp { keycode } => {
+                                                    tracing::debug!("RECV KeyUp: keycode={} ({})",
+                                                        keycode, keycode_to_name(keycode));
                                                     emu.keyboard.key(keycode, hyprkvm_common::KeyState::Released);
                                                 }
                                                 InputEventType::PointerMotion { dx, dy } => {
@@ -890,37 +923,32 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
                     transfer::TransferEvent::StopCapture => {
                         info!("Stopping input capture");
+                        let was_capturing_direction = capture_direction;
                         capture_direction = None;
                         input_grabber.stop();
 
-                        // After ungrabbing, we need to reset modifier state in the compositor.
-                        // The compositor didn't see key-ups for modifiers that were released
-                        // while we had input grabbed. Send synthetic key-ups for all modifiers.
-                        if input_emulator.is_none() {
-                            match input::InputEmulator::new() {
-                                Ok(emu) => {
+                        // Fix for "first keypress eaten" bug:
+                        // When the transfer was initiated via keybinding (e.g., Super+Right),
+                        // Hyprland saw the arrow key DOWN but we grabbed before it saw the UP.
+                        // So Hyprland thinks that arrow key is still pressed.
+                        // Inject a key-up for the arrow key used to initiate the transfer.
+                        if let Some(dir) = was_capturing_direction {
+                            let arrow_keycode = match dir {
+                                Direction::Left => 105,  // KEY_LEFT
+                                Direction::Right => 106, // KEY_RIGHT
+                                Direction::Up => 103,    // KEY_UP
+                                Direction::Down => 108,  // KEY_DOWN
+                            };
+
+                            // Create emulator if needed
+                            if input_emulator.is_none() {
+                                if let Ok(emu) = input::InputEmulator::new() {
                                     input_emulator = Some(emu);
                                 }
-                                Err(e) => {
-                                    tracing::warn!("Failed to create emulator for modifier reset: {}", e);
-                                }
                             }
-                        }
-                        if let Some(ref mut emu) = input_emulator {
-                            tracing::debug!("Sending modifier key-ups to reset compositor state");
-                            // Release all modifier keys
-                            const MODIFIER_KEYCODES: &[u32] = &[
-                                42,   // KEY_LEFTSHIFT
-                                54,   // KEY_RIGHTSHIFT
-                                29,   // KEY_LEFTCTRL
-                                97,   // KEY_RIGHTCTRL
-                                56,   // KEY_LEFTALT
-                                100,  // KEY_RIGHTALT
-                                125,  // KEY_LEFTMETA (Super)
-                                126,  // KEY_RIGHTMETA (Super)
-                            ];
-                            for &keycode in MODIFIER_KEYCODES {
-                                emu.keyboard.key(keycode, hyprkvm_common::KeyState::Released);
+                            if let Some(ref mut emu) = input_emulator {
+                                tracing::debug!("Injecting arrow key-up for {:?} to fix stuck key state", dir);
+                                emu.keyboard.key(arrow_keycode, hyprkvm_common::KeyState::Released);
                             }
                         }
                     }

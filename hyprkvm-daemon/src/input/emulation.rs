@@ -171,11 +171,27 @@ impl VirtualKeyboard {
             KeyState::Released => wl_keyboard_key_state::RELEASED,
         };
 
+        // Log the key event with modifier state for debugging
+        let key_name = keycode_name(keycode);
+        tracing::debug!(
+            "INJECT KEY: {} {} (keycode={}, modifiers: depressed={:#x}, super={})",
+            key_name,
+            if pressed { "DOWN" } else { "UP" },
+            keycode,
+            self.modifier_state.depressed(),
+            self.modifier_state.left_super || self.modifier_state.right_super
+        );
+
         // Send the key event
         self.keyboard.key(time, keycode, wl_state);
 
         // If this is a modifier key, update and send modifier state
         if self.modifier_state.update(keycode, pressed) {
+            tracing::debug!(
+                "INJECT MODIFIERS: depressed={:#x} (super={})",
+                self.modifier_state.depressed(),
+                self.modifier_state.left_super || self.modifier_state.right_super
+            );
             self.keyboard.modifiers(
                 self.modifier_state.depressed(),
                 0, // latched
@@ -473,4 +489,29 @@ pub mod button_codes {
     pub const BTN_EXTRA: u32 = 0x114;
     pub const BTN_FORWARD: u32 = 0x115;
     pub const BTN_BACK: u32 = 0x116;
+}
+
+/// Convert keycode to human-readable name for logging
+fn keycode_name(keycode: u32) -> &'static str {
+    match keycode {
+        1 => "ESC",
+        14 => "BACKSPACE",
+        15 => "TAB",
+        28 => "ENTER",
+        29 => "LEFTCTRL",
+        42 => "LEFTSHIFT",
+        54 => "RIGHTSHIFT",
+        56 => "LEFTALT",
+        57 => "SPACE",
+        58 => "CAPSLOCK",
+        97 => "RIGHTCTRL",
+        100 => "RIGHTALT",
+        103 => "UP",
+        105 => "LEFT",
+        106 => "RIGHT",
+        108 => "DOWN",
+        125 => "LEFTMETA",
+        126 => "RIGHTMETA",
+        _ => "OTHER",
+    }
 }
