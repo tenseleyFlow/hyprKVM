@@ -20,6 +20,26 @@ yay -S hyprkvm
 paru -S hyprkvm
 ```
 
+### RHEL / Fedora / Rocky / Alma / CentOS
+
+```bash
+# Add the musicsian repository
+sudo dnf config-manager --add-repo https://repos.musicsian.com/musicsian.repo
+
+# Install hyprkvm
+sudo dnf install hyprkvm
+```
+
+### Homebrew (Linux)
+
+```bash
+# Add the tap
+brew tap tenseleyFlow/tap
+
+# Install hyprkvm
+brew install hyprkvm
+```
+
 ### NixOS / Nix
 
 Add to your flake inputs:
