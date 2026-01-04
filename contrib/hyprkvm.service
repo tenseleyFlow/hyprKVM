@@ -1,0 +1,22 @@
+[Unit]
+Description=HyprKVM - Hyprland KVM Switch Daemon
+Documentation=https://github.com/tenseleyFlow/hyprKVM
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/hyprkvm daemon
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/hyprkvm
+PrivateTmp=true
+
+[Install]
+WantedBy=graphical-session.target

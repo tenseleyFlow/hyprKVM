@@ -1,0 +1,85 @@
+# HyprKVM Configuration
+# Copy to ~/.config/hyprkvm/hyprkvm.toml
+
+# =============================================================================
+# Machine Identity
+# =============================================================================
+[machines]
+# This machine's name (defaults to hostname)
+self_name = "my-machine"
+
+# Neighbor machines
+# Configure machines adjacent to this one
+
+[[machines.neighbors]]
+name = "desktop"
+direction = "right"  # This machine is to our right
+address = "desktop.local:24850"
+# Optional: pre-trust fingerprint (skip verification prompt)
+# fingerprint = "SHA256:..."
+
+# [[machines.neighbors]]
+# name = "laptop"
+# direction = "left"
+# address = "192.168.1.20:24850"
+
+# =============================================================================
+# Network Settings
+# =============================================================================
+[network]
+# Port to listen on for incoming connections
+listen_port = 24850
+
+# Address to bind to (0.0.0.0 for all interfaces)
+bind_address = "0.0.0.0"
+
+# Connection timeout in seconds
+connect_timeout_secs = 5
+
+# Heartbeat settings
+ping_interval_secs = 5
+ping_timeout_secs = 10
+
+# TLS certificate paths (auto-generated if missing)
+[network.tls]
+cert_path = "~/.config/hyprkvm/cert.pem"
+key_path = "~/.config/hyprkvm/key.pem"
+
+# =============================================================================
+# Input Settings
+# =============================================================================
+[input]
+# Escape hotkey - press to return control to this machine
+[input.escape_hotkey]
+key = "scroll_lock"
+modifiers = []  # e.g., ["super"] for Super+ScrollLock
+
+# Triple-tap fallback (three quick taps of this key)
+triple_tap_enabled = true
+triple_tap_key = "shift"
+triple_tap_window_ms = 500
+
+# =============================================================================
+# Clipboard Settings
+# =============================================================================
+[clipboard]
+# Enable clipboard synchronization
+enabled = true
+
+# When to sync
+sync_on_enter = true   # Sync when taking control of another machine
+sync_on_leave = true   # Sync when returning control
+
+# What to sync
+sync_text = true
+sync_images = true
+
+# Maximum clipboard size to sync (bytes)
+max_size = 10485760  # 10MB
+
+# =============================================================================
+# Logging
+# =============================================================================
+[logging]
+# Log level: error, warn, info, debug, trace
+level = "info"

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=HyprKVM
+Comment=Hyprland-native software KVM switch
+Exec=hyprkvm-gui
+Icon=hyprkvm
+Type=Application
+Categories=Utility;System;
+Keywords=kvm;synergy;barrier;input;keyboard;mouse;hyprland;
+StartupNotify=true
+StartupWMClass=hyprkvm
