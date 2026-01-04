@@ -245,7 +245,7 @@ impl TransferManager {
             TransferState::Initiating { .. } => {
                 // We're trying to send control, but they're also trying to send to us
                 // This is a collision - let them win (accept their Enter)
-                tracing::warn!("Enter collision: we were Initiating, accepting their Enter");
+                tracing::debug!("Enter collision: we were Initiating, accepting their Enter");
             }
             TransferState::RemoteActive { .. } => {
                 // We're forwarding to them, but they're sending control back to us

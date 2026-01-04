@@ -361,7 +361,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     loop {
         tokio::select! {
             // Check for edge events, grabber events, and poll peer messages
-            _ = tokio::time::sleep(std::time::Duration::from_micros(500)) => {
+            _ = tokio::time::sleep(std::time::Duration::from_micros(100)) => {
                 // Forward grabbed input to remote peer
                 if let Some(cap_dir) = capture_direction {
                     let mut should_escape = false;
@@ -607,10 +607,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     peers.keys().cloned().collect()
                 };
 
-                // Debug: log state and peers occasionally
+                // Debug: log state and peers occasionally (every ~5 seconds at 100μs polling)
                 static POLL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let count = POLL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if count % 500 == 0 {
+                if count % 50000 == 0 {
                     let state = transfer_manager.state().await;
                     tracing::info!("Poll #{}: state={:?}, peers={:?}", count, state, directions);
                 }
@@ -619,8 +619,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     let mut peers = peers.write().await;
                     if let Some(peer) = peers.get_mut(&direction) {
                         // Try non-blocking receive using tokio timeout
+                        // Use minimal timeout to avoid blocking the event loop
                         match tokio::time::timeout(
-                            std::time::Duration::from_millis(1),
+                            std::time::Duration::from_micros(50),
                             peer.recv()
                         ).await {
                             Ok(Ok(Some(msg))) => {
@@ -646,13 +647,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     Message::EnterAck(ack) => {
                                         info!("Received EnterAck: success={}", ack.success);
                                         if let Err(e) = transfer_manager.handle_enter_ack(ack).await {
-                                            tracing::error!("Failed to handle EnterAck: {}", e);
+                                            // Usually a benign race condition (collision resolved)
+                                            tracing::debug!("Failed to handle EnterAck: {}", e);
                                         }
                                     }
                                     Message::Leave(payload) => {
                                         info!("Received Leave from {:?}", direction);
                                         if let Err(e) = transfer_manager.handle_leave(payload).await {
-                                            tracing::error!("Failed to handle Leave: {}", e);
+                                            // Usually a benign race condition
+                                            tracing::debug!("Failed to handle Leave: {}", e);
                                         }
                                     }
                                     Message::LeaveAck => {
