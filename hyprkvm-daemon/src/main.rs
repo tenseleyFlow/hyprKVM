@@ -166,11 +166,22 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         enabled_edges: enabled_edges.clone(),
     })?;
 
+    // Create input grabber (for when we send control elsewhere)
+    let input_grabber = input::InputGrabber::new(input::InputGrabberConfig::default())?;
+
+    // Create input emulator (for when we receive control from elsewhere)
+    // This is created lazily when we first need to inject
+    let mut input_emulator: Option<input::InputEmulator> = None;
+
     // Create transfer manager
     let (transfer_manager, mut transfer_events) = transfer::TransferManager::new(
         config.machines.self_name.clone(),
     );
     let transfer_manager = Arc::new(transfer_manager);
+
+    // Track which direction we're capturing for
+    let mut capture_direction: Option<Direction> = None;
+    let mut input_sequence: u64 = 0;
 
     // Connection storage: direction -> peer connection
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
@@ -296,8 +307,24 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
     loop {
         tokio::select! {
-            // Check for edge events and poll peer messages
+            // Check for edge events, grabber events, and poll peer messages
             _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                // Forward grabbed input to remote peer
+                if let Some(cap_dir) = capture_direction {
+                    while let Some(grab_event) = input_grabber.try_recv() {
+                        let payload = grab_event.to_protocol(input_sequence);
+                        input_sequence += 1;
+
+                        let msg = Message::InputEvent(payload);
+                        let mut peers = peers.write().await;
+                        if let Some(peer) = peers.get_mut(&cap_dir) {
+                            if let Err(e) = peer.send(&msg).await {
+                                tracing::error!("Failed to send input event: {}", e);
+                            }
+                        }
+                    }
+                }
+
                 // Handle edge events
                 while let Some(edge_event) = edge_capture.try_recv() {
                     let direction = edge_event.direction;
@@ -382,9 +409,37 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         info!("Received LeaveAck");
                                         // Transfer complete
                                     }
-                                    Message::InputEvent(input) => {
-                                        tracing::trace!("Received input event: {:?}", input);
-                                        // TODO: Inject input via emulation module
+                                    Message::InputEvent(input_payload) => {
+                                        tracing::trace!("Received input event: {:?}", input_payload);
+                                        // Inject input via emulation module
+                                        if let Some(ref emu) = input_emulator {
+                                            use hyprkvm_common::protocol::InputEventType;
+                                            match input_payload.event {
+                                                InputEventType::KeyDown { keycode } => {
+                                                    emu.keyboard.key(keycode, hyprkvm_common::KeyState::Pressed);
+                                                }
+                                                InputEventType::KeyUp { keycode } => {
+                                                    emu.keyboard.key(keycode, hyprkvm_common::KeyState::Released);
+                                                }
+                                                InputEventType::PointerMotion { dx, dy } => {
+                                                    emu.pointer.motion(dx, dy);
+                                                }
+                                                InputEventType::PointerButton { button, pressed } => {
+                                                    let state = if pressed {
+                                                        hyprkvm_common::ButtonState::Pressed
+                                                    } else {
+                                                        hyprkvm_common::ButtonState::Released
+                                                    };
+                                                    emu.pointer.button(button, state);
+                                                }
+                                                InputEventType::Scroll { horizontal, vertical } => {
+                                                    emu.pointer.scroll(horizontal, vertical);
+                                                }
+                                                InputEventType::ModifierState { .. } => {
+                                                    // Modifier state is informational
+                                                }
+                                            }
+                                        }
                                     }
                                     Message::Ping { timestamp } => {
                                         let _ = peer.send(&Message::Pong { timestamp }).await;
@@ -433,20 +488,34 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             tracing::warn!("No peer for direction {:?}", direction);
                         }
                     }
-                    transfer::TransferEvent::StartCapture { direction } => {
-                        info!("Starting input capture for {:?}", direction);
-                        // TODO: Implement actual input capture
-                        // For now, just log
+                    transfer::TransferEvent::StartCapture { direction: cap_dir } => {
+                        info!("Starting input capture for {:?}", cap_dir);
+                        capture_direction = Some(cap_dir);
+                        input_grabber.start();
                     }
                     transfer::TransferEvent::StopCapture => {
                         info!("Stopping input capture");
+                        capture_direction = None;
+                        input_grabber.stop();
                     }
                     transfer::TransferEvent::StartInjection { from } => {
                         info!("Starting input injection from {:?}", from);
-                        // TODO: Implement actual input injection
+                        // Create input emulator if not exists
+                        if input_emulator.is_none() {
+                            match input::InputEmulator::new() {
+                                Ok(emu) => {
+                                    info!("Input emulator created");
+                                    input_emulator = Some(emu);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to create input emulator: {}", e);
+                                }
+                            }
+                        }
                     }
                     transfer::TransferEvent::StopInjection => {
                         info!("Stopping input injection");
+                        // Keep emulator around for next time
                     }
                 }
             }

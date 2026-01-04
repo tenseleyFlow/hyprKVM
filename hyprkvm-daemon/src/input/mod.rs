@@ -4,9 +4,8 @@
 
 pub mod capture;
 pub mod emulation;
-
-// TODO: Sprint 3 - Implement input handling
-// pub mod router;
+pub mod grabber;
 
 pub use capture::{EdgeCapture, EdgeCaptureConfig, EdgeCaptureError, EdgeEvent};
 pub use emulation::{InputEmulator, VirtualKeyboard, VirtualPointer, EmulationError, button_codes};
+pub use grabber::{InputGrabber, InputGrabberConfig, GrabEvent, GrabberError};
