@@ -8,7 +8,8 @@ use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use hyprkvm_common::protocol::{IpcRequest, IpcResponse};
+use hyprkvm_common::protocol::{IpcRequest, IpcResponse, SwitchTarget};
+use hyprkvm_common::Direction;
 
 #[derive(Parser)]
 #[command(name = "hyprkvm-ctl")]
@@ -21,6 +22,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    // ========================================================================
+    // Status & Diagnostics
+    // ========================================================================
     /// Show daemon status
     Status {
         /// Output as JSON
@@ -40,6 +44,81 @@ enum Commands {
         /// Peer name to ping
         peer: String,
     },
+
+    // ========================================================================
+    // Control Transfer
+    // ========================================================================
+    /// Transfer control to another machine
+    Switch {
+        /// Direction (left/right/up/down) or machine name
+        target: String,
+    },
+
+    /// Return control to this machine
+    Return,
+
+    // ========================================================================
+    // Input Management
+    // ========================================================================
+    /// Force release input capture (recovery)
+    Release,
+
+    /// Enable/disable edge barrier (lock cursor to this machine)
+    Barrier {
+        #[command(subcommand)]
+        action: BarrierAction,
+    },
+
+    // ========================================================================
+    // Connection Management
+    // ========================================================================
+    /// Disconnect from a peer
+    Disconnect {
+        /// Peer name to disconnect
+        peer: String,
+    },
+
+    /// Reconnect to a peer
+    Reconnect {
+        /// Peer name to reconnect
+        peer: String,
+    },
+
+    // ========================================================================
+    // Configuration & Daemon
+    // ========================================================================
+    /// Show current configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
+    /// Reload configuration from file
+    Reload,
+
+    /// Shutdown the daemon
+    Shutdown,
+
+    /// Show daemon logs
+    Logs {
+        /// Number of lines to show
+        #[arg(short = 'n', default_value = "50")]
+        lines: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum BarrierAction {
+    /// Enable barrier (prevent cursor from leaving)
+    On,
+    /// Disable barrier (allow cursor to leave)
+    Off,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Show current configuration
+    Show,
 }
 
 // ============================================================================
@@ -84,6 +163,17 @@ impl IpcClient {
     }
 }
 
+/// Connect to daemon or exit with error
+async fn connect_or_exit() -> IpcClient {
+    match IpcClient::connect().await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: daemon not running ({})", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -113,6 +203,39 @@ fn status_indicator(status: &str) -> &'static str {
         "connecting" => "\x1b[33m●\x1b[0m",   // Yellow dot
         "disconnected" => "\x1b[31m●\x1b[0m", // Red dot
         _ => "○",                              // Empty dot
+    }
+}
+
+/// Parse target as direction or machine name
+fn parse_switch_target(target: &str) -> SwitchTarget {
+    match target.to_lowercase().as_str() {
+        "left" | "l" => SwitchTarget::Direction(Direction::Left),
+        "right" | "r" => SwitchTarget::Direction(Direction::Right),
+        "up" | "u" => SwitchTarget::Direction(Direction::Up),
+        "down" | "d" => SwitchTarget::Direction(Direction::Down),
+        _ => SwitchTarget::MachineName(target.to_string()),
+    }
+}
+
+/// Handle common response types
+fn handle_ok_or_error(response: IpcResponse) -> anyhow::Result<()> {
+    match response {
+        IpcResponse::Ok { message } => {
+            println!("{}", message);
+            Ok(())
+        }
+        IpcResponse::Transferred { to_machine } => {
+            println!("Control transferred to {}", to_machine);
+            Ok(())
+        }
+        IpcResponse::Error { message } => {
+            eprintln!("Error: {}", message);
+            std::process::exit(1);
+        }
+        _ => {
+            eprintln!("Unexpected response from daemon");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -249,13 +372,7 @@ async fn handle_peers(json_output: bool) -> anyhow::Result<()> {
 }
 
 async fn handle_ping(peer_name: String) -> anyhow::Result<()> {
-    let mut client = match IpcClient::connect().await {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Error: daemon not running ({})", e);
-            std::process::exit(1);
-        }
-    };
+    let mut client = connect_or_exit().await;
 
     println!("Pinging {}...", peer_name);
 
@@ -294,6 +411,102 @@ async fn handle_ping(peer_name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_switch(target: String) -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let switch_target = parse_switch_target(&target);
+    let response = client.request(&IpcRequest::Switch { target: switch_target }).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_return() -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::Return).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_release() -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::Release).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_barrier(enabled: bool) -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::SetBarrier { enabled }).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_disconnect(peer: String) -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::Disconnect { peer_name: peer }).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_reconnect(peer: String) -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::Reconnect { peer_name: peer }).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_config_show() -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::GetConfig).await?;
+
+    match response {
+        IpcResponse::Config { toml } => {
+            println!("{}", toml);
+            Ok(())
+        }
+        IpcResponse::Error { message } => {
+            eprintln!("Error: {}", message);
+            std::process::exit(1);
+        }
+        _ => {
+            eprintln!("Unexpected response from daemon");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn handle_reload() -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::Reload).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_shutdown() -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client.request(&IpcRequest::Shutdown).await?;
+    handle_ok_or_error(response)
+}
+
+async fn handle_logs(lines: u32) -> anyhow::Result<()> {
+    let mut client = connect_or_exit().await;
+    let response = client
+        .request(&IpcRequest::GetLogs {
+            lines: Some(lines),
+            follow: false,
+        })
+        .await?;
+
+    match response {
+        IpcResponse::Logs { lines } => {
+            for line in lines {
+                println!("{}", line);
+            }
+            Ok(())
+        }
+        IpcResponse::Error { message } => {
+            eprintln!("Error: {}", message);
+            std::process::exit(1);
+        }
+        _ => {
+            eprintln!("Unexpected response from daemon");
+            std::process::exit(1);
+        }
+    }
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -303,9 +516,33 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        // Status & Diagnostics
         Commands::Status { json } => handle_status(json).await?,
         Commands::Peers { json } => handle_peers(json).await?,
         Commands::Ping { peer } => handle_ping(peer).await?,
+
+        // Control Transfer
+        Commands::Switch { target } => handle_switch(target).await?,
+        Commands::Return => handle_return().await?,
+
+        // Input Management
+        Commands::Release => handle_release().await?,
+        Commands::Barrier { action } => {
+            let enabled = matches!(action, BarrierAction::On);
+            handle_barrier(enabled).await?
+        }
+
+        // Connection Management
+        Commands::Disconnect { peer } => handle_disconnect(peer).await?,
+        Commands::Reconnect { peer } => handle_reconnect(peer).await?,
+
+        // Configuration & Daemon
+        Commands::Config { action } => match action {
+            ConfigAction::Show => handle_config_show().await?,
+        },
+        Commands::Reload => handle_reload().await?,
+        Commands::Shutdown => handle_shutdown().await?,
+        Commands::Logs { lines } => handle_logs(lines).await?,
     }
 
     Ok(())

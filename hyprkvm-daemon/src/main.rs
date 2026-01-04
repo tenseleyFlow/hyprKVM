@@ -158,6 +158,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     // Track daemon start time for uptime reporting
     let daemon_start_time = std::time::Instant::now();
 
+    // State flags for CLI control
+    let barrier_enabled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     // Connect to Hyprland
     info!("Connecting to Hyprland...");
     let hypr_client = hyprland::ipc::HyprlandClient::new().await?;
@@ -1469,14 +1473,289 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             }
                         }
                     }
+
+                    // ================================================================
+                    // CLI Expansion: Control Transfer
+                    // ================================================================
+
+                    IpcRequest::Switch { target } => {
+                        use hyprkvm_common::protocol::SwitchTarget;
+
+                        // Resolve target to a direction
+                        let direction = match &target {
+                            SwitchTarget::Direction(dir) => Some(*dir),
+                            SwitchTarget::MachineName(name) => {
+                                config.machines.neighbors
+                                    .iter()
+                                    .find(|n| &n.name == name)
+                                    .map(|n| n.direction)
+                            }
+                        };
+
+                        match direction {
+                            Some(dir) => {
+                                let peers_guard = peers.read().await;
+                                if peers_guard.get(&dir).is_some() {
+                                    drop(peers_guard);
+
+                                    // Get cursor position and screen size from Hyprland
+                                    let (cursor_pos, screen_width, screen_height) = match hypr_client.monitors().await {
+                                        Ok(monitors) => {
+                                            if let Some(focused) = monitors.iter().find(|m| m.focused) {
+                                                // Use center of screen as cursor position for switch
+                                                let cx = focused.x + focused.width as i32 / 2;
+                                                let cy = focused.y + focused.height as i32 / 2;
+                                                ((cx, cy), focused.width, focused.height)
+                                            } else {
+                                                ((0, 0), 1920, 1080) // Fallback
+                                            }
+                                        }
+                                        Err(_) => ((0, 0), 1920, 1080), // Fallback
+                                    };
+
+                                    // Initiate transfer
+                                    match transfer_manager.initiate_transfer(dir, cursor_pos, screen_height, screen_width).await {
+                                        Ok(()) => {
+                                            let machine_name = config.machines.neighbors
+                                                .iter()
+                                                .find(|n| n.direction == dir)
+                                                .map(|n| n.name.clone())
+                                                .unwrap_or_else(|| format!("{:?}", dir));
+                                            IpcResponse::Transferred { to_machine: machine_name }
+                                        }
+                                        Err(e) => IpcResponse::Error {
+                                            message: format!("Transfer failed: {}", e),
+                                        }
+                                    }
+                                } else {
+                                    IpcResponse::Error {
+                                        message: format!("Peer not connected in direction {:?}", dir),
+                                    }
+                                }
+                            }
+                            None => {
+                                let name = match target {
+                                    SwitchTarget::MachineName(n) => n,
+                                    _ => "unknown".to_string(),
+                                };
+                                IpcResponse::Error {
+                                    message: format!("Unknown machine: {}", name),
+                                }
+                            }
+                        }
+                    }
+
+                    IpcRequest::Return => {
+                        match transfer_manager.return_control().await {
+                            Ok(()) => IpcResponse::Ok {
+                                message: "Control returned".to_string(),
+                            },
+                            Err(e) => IpcResponse::Error {
+                                message: format!("Return failed: {}", e),
+                            }
+                        }
+                    }
+
+                    // ================================================================
+                    // CLI Expansion: Input Management
+                    // ================================================================
+
+                    IpcRequest::Release => {
+                        // Stop input grabbing
+                        input_grabber.stop(None);
+                        // Abort any pending transfer
+                        transfer_manager.abort().await;
+                        IpcResponse::Ok {
+                            message: "Input released".to_string(),
+                        }
+                    }
+
+                    IpcRequest::SetBarrier { enabled } => {
+                        barrier_enabled.store(enabled, std::sync::atomic::Ordering::SeqCst);
+                        let status = if enabled { "enabled" } else { "disabled" };
+                        IpcResponse::Ok {
+                            message: format!("Barrier {}", status),
+                        }
+                    }
+
+                    // ================================================================
+                    // CLI Expansion: Connection Management
+                    // ================================================================
+
+                    IpcRequest::Disconnect { peer_name } => {
+                        let neighbor = config.machines.neighbors
+                            .iter()
+                            .find(|n| n.name == peer_name);
+
+                        match neighbor {
+                            Some(n) => {
+                                let direction = n.direction;
+                                let mut peers_guard = peers.write().await;
+                                if let Some(mut peer_conn) = peers_guard.remove(&direction) {
+                                    // Send goodbye before disconnecting
+                                    let _ = peer_conn.send(&Message::Goodbye).await;
+                                    IpcResponse::Ok {
+                                        message: format!("Disconnected from {}", peer_name),
+                                    }
+                                } else {
+                                    IpcResponse::Error {
+                                        message: format!("Peer {} not connected", peer_name),
+                                    }
+                                }
+                            }
+                            None => IpcResponse::Error {
+                                message: format!("Unknown peer: {}", peer_name),
+                            }
+                        }
+                    }
+
+                    IpcRequest::Reconnect { peer_name } => {
+                        let neighbor = config.machines.neighbors
+                            .iter()
+                            .find(|n| n.name == peer_name)
+                            .cloned();
+
+                        match neighbor {
+                            Some(n) => {
+                                let direction = n.direction;
+                                let addr = n.address;
+                                // Remove existing connection if any
+                                {
+                                    let mut peers_guard = peers.write().await;
+                                    if let Some(mut peer_conn) = peers_guard.remove(&direction) {
+                                        let _ = peer_conn.send(&Message::Goodbye).await;
+                                    }
+                                }
+                                // Spawn reconnection task (same logic as initial connection)
+                                let peers_clone = peers.clone();
+                                let machine_name = config.machines.self_name.clone();
+                                let neighbor_name = n.name.clone();
+                                tokio::spawn(async move {
+                                    match network::connect(addr).await {
+                                        Ok(mut conn) => {
+                                            // Send Hello
+                                            let hello = Message::Hello(HelloPayload {
+                                                protocol_version: PROTOCOL_VERSION,
+                                                machine_name,
+                                                capabilities: vec![],
+                                            });
+                                            if let Err(e) = conn.send(&hello).await {
+                                                tracing::error!("Reconnect: failed to send Hello: {}", e);
+                                                return;
+                                            }
+                                            // Wait for HelloAck
+                                            match conn.recv().await {
+                                                Ok(Some(Message::HelloAck(ack))) if ack.accepted => {
+                                                    let mut peers_guard = peers_clone.write().await;
+                                                    peers_guard.insert(direction, conn);
+                                                    info!("Reconnected to {}", neighbor_name);
+                                                }
+                                                Ok(Some(Message::HelloAck(ack))) => {
+                                                    tracing::error!("Reconnect rejected: {:?}", ack.error);
+                                                }
+                                                _ => {
+                                                    tracing::error!("Reconnect: handshake failed");
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Reconnect: connection failed: {}", e);
+                                        }
+                                    }
+                                });
+                                IpcResponse::Ok {
+                                    message: format!("Reconnecting to {}", peer_name),
+                                }
+                            }
+                            None => IpcResponse::Error {
+                                message: format!("Unknown peer: {}", peer_name),
+                            }
+                        }
+                    }
+
+                    // ================================================================
+                    // CLI Expansion: Configuration
+                    // ================================================================
+
+                    IpcRequest::GetConfig => {
+                        match toml::to_string_pretty(&config) {
+                            Ok(toml_str) => IpcResponse::Config { toml: toml_str },
+                            Err(e) => IpcResponse::Error {
+                                message: format!("Failed to serialize config: {}", e),
+                            }
+                        }
+                    }
+
+                    IpcRequest::Reload => {
+                        // TODO: Implement config hot-reload
+                        IpcResponse::Error {
+                            message: "Config reload not yet implemented".to_string(),
+                        }
+                    }
+
+                    // ================================================================
+                    // CLI Expansion: Daemon Control
+                    // ================================================================
+
+                    IpcRequest::Shutdown => {
+                        info!("Shutdown requested via IPC");
+                        shutdown_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+                        IpcResponse::Ok {
+                            message: "Shutting down...".to_string(),
+                        }
+                    }
+
+                    IpcRequest::GetLogs { lines, follow: _ } => {
+                        // Read from log file
+                        let log_path = dirs::data_local_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                            .join("hyprkvm")
+                            .join("daemon.log");
+
+                        if log_path.exists() {
+                            match std::fs::read_to_string(&log_path) {
+                                Ok(content) => {
+                                    let n = lines.unwrap_or(50) as usize;
+                                    let log_lines: Vec<String> = content
+                                        .lines()
+                                        .rev()
+                                        .take(n)
+                                        .map(|s| s.to_string())
+                                        .collect::<Vec<_>>()
+                                        .into_iter()
+                                        .rev()
+                                        .collect();
+                                    IpcResponse::Logs { lines: log_lines }
+                                }
+                                Err(e) => IpcResponse::Error {
+                                    message: format!("Failed to read log file: {}", e),
+                                }
+                            }
+                        } else {
+                            IpcResponse::Logs {
+                                lines: vec!["Log file not found. File logging may not be configured.".to_string()],
+                            }
+                        }
+                    }
                 };
 
                 let _ = response_tx.send(response);
             }
 
-            // Shutdown
+            // Shutdown (Ctrl+C or IPC request)
             _ = tokio::signal::ctrl_c() => {
-                info!("Shutting down...");
+                info!("Shutting down (Ctrl+C)...");
+                accept_handle.abort();
+                break;
+            }
+
+            // Check for IPC shutdown request
+            _ = async {
+                while !shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            } => {
+                info!("Shutting down (IPC request)...");
                 accept_handle.abort();
                 break;
             }

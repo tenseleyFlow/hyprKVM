@@ -207,6 +207,14 @@ pub struct ClipboardDataPayload {
 // IPC Messages (CLI <-> Daemon)
 // ============================================================================
 
+/// Target for switch command - either direction or machine name
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SwitchTarget {
+    Direction(Direction),
+    MachineName(String),
+}
+
 /// IPC request from CLI to daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -219,6 +227,41 @@ pub enum IpcRequest {
     ListPeers,
     /// Ping a specific peer by name
     PingPeer { peer_name: String },
+
+    // Control transfer
+    /// Transfer control to another machine (by direction or name)
+    Switch { target: SwitchTarget },
+    /// Return control to this machine
+    Return,
+
+    // Input management
+    /// Force release input capture
+    Release,
+    /// Enable/disable edge barrier (prevent cursor from leaving)
+    SetBarrier { enabled: bool },
+
+    // Connection management
+    /// Disconnect from a peer
+    Disconnect { peer_name: String },
+    /// Force reconnection to a peer
+    Reconnect { peer_name: String },
+
+    // Configuration
+    /// Get current configuration
+    GetConfig,
+    /// Reload configuration from file
+    Reload,
+
+    // Daemon control
+    /// Graceful shutdown
+    Shutdown,
+    /// Get daemon logs
+    GetLogs {
+        /// Number of lines to retrieve (default: 50)
+        lines: Option<u32>,
+        /// Stream new lines (not yet implemented)
+        follow: bool,
+    },
 }
 
 /// IPC response from daemon to CLI
@@ -250,6 +293,14 @@ pub enum IpcResponse {
     },
     /// Error occurred
     Error { message: String },
+
+    // New responses for CLI expansion
+    /// Generic success response
+    Ok { message: String },
+    /// Configuration dump
+    Config { toml: String },
+    /// Log lines
+    Logs { lines: Vec<String> },
 }
 
 /// Info about a connected peer
