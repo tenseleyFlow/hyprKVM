@@ -919,6 +919,26 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     transfer::TransferEvent::StartCapture { direction: cap_dir } => {
                         info!("Starting input capture for {:?}", cap_dir);
                         capture_direction = Some(cap_dir);
+
+                        // Send synthetic Super key-down as first event.
+                        // The transfer was likely initiated via Super+Arrow keybinding,
+                        // which means Super was already held when the grab started.
+                        // The evdev grabber won't see the initial Super key-down,
+                        // so we need to send it explicitly so the destination knows
+                        // Super is pressed for subsequent keybindings.
+                        {
+                            let mut peers_guard = peers.write().await;
+                            if let Some(peer) = peers_guard.get_mut(&cap_dir) {
+                                let super_down = input::GrabEvent::KeyDown { keycode: 125 }; // KEY_LEFTMETA
+                                let payload = super_down.to_protocol(input_sequence);
+                                input_sequence += 1;
+                                tracing::debug!("Sending synthetic Super key-down to destination");
+                                if let Err(e) = peer.send(&Message::InputEvent(payload)).await {
+                                    tracing::error!("Failed to send synthetic Super: {}", e);
+                                }
+                            }
+                        }
+
                         input_grabber.start();
                     }
                     transfer::TransferEvent::StopCapture => {
