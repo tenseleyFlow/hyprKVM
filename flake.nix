@@ -32,10 +32,6 @@
           # For smithay-client-toolkit
           libxkbcommon
 
-          # For GTK4 GUI (future)
-          gtk4
-          libadwaita
-
           # TLS
           openssl
         ];
@@ -65,24 +61,33 @@
           '';
         };
 
-        # Package (for later)
+        # Package
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "hyprkvm";
-          version = "0.1.0";
+          version = "0.5.0";
           src = ./.;
 
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
 
-          nativeBuildInputs = buildDeps ++ [ pkgs.wrapGAppsHook4 ];
+          nativeBuildInputs = buildDeps;
           buildInputs = libDeps;
+
+          # Builds both hyprkvm (daemon) and hyprkvm-ctl (CLI)
+          # buildRustPackage automatically installs all workspace binaries
 
           meta = with pkgs.lib; {
             description = "Hyprland-native software KVM switch";
+            longDescription = ''
+              HyprKVM enables seamless keyboard/mouse control transfer between
+              Linux machines running Hyprland. Move past your last workspace
+              to switch to another machine.
+            '';
             homepage = "https://github.com/tenseleyFlow/hyprKVM";
             license = licenses.mit;
             platforms = platforms.linux;
+            mainProgram = "hyprkvm";
           };
         };
       }
