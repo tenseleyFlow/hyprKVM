@@ -721,6 +721,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         cursor_pos,
                                         screen_height,
                                         screen_width,
+                                        true, // keyboard-initiated (recovery hotkey)
                                     ).await {
                                         tracing::error!("Failed to initiate transfer from recovery hotkey: {}", e);
                                     }
@@ -805,6 +806,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 edge_event.position,
                                 screen_height,
                                 screen_width,
+                                false, // not keyboard-initiated (mouse edge)
                             ).await {
                                 tracing::warn!("Failed to initiate transfer: {}", e);
                             }
@@ -907,6 +909,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                             (cx, cy),
                                                             screen_height,
                                                             screen_width,
+                                                            false, // not keyboard-initiated (cursor edge)
                                                         ).await {
                                                             tracing::warn!("Failed to initiate transfer: {}", e);
                                                         }
@@ -1101,27 +1104,30 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             transfer_manager.abort().await;
                         }
                     }
-                    transfer::TransferEvent::StartCapture { direction: cap_dir } => {
-                        info!("Starting input capture for {:?}", cap_dir);
+                    transfer::TransferEvent::StartCapture { direction: cap_dir, keyboard_initiated } => {
+                        info!("StartCapture event received for {:?}, keyboard_initiated={}", cap_dir, keyboard_initiated);
                         capture_direction = Some(cap_dir);
 
-                        // Send synthetic Super key-down as first event.
-                        // The transfer was likely initiated via Super+Arrow keybinding,
-                        // which means Super was already held when the grab started.
-                        // The evdev grabber won't see the initial Super key-down,
-                        // so we need to send it explicitly so the destination knows
-                        // Super is pressed for subsequent keybindings.
-                        {
+                        // Only send synthetic Super key-down if the transfer was keyboard-initiated.
+                        // When triggered via Super+Arrow keybinding, Super was already held when
+                        // the grab started. The evdev grabber won't see the initial Super key-down,
+                        // so we send it explicitly so the destination knows Super is pressed.
+                        // For CLI-initiated switches, the user isn't holding Super, so don't send it.
+                        if keyboard_initiated {
                             let mut peers_guard = peers.write().await;
                             if let Some(peer) = peers_guard.get_mut(&cap_dir) {
                                 let super_down = input::GrabEvent::KeyDown { keycode: 125 }; // KEY_LEFTMETA
                                 let payload = super_down.to_protocol(input_sequence);
                                 input_sequence += 1;
-                                tracing::debug!("Sending synthetic Super key-down to destination");
+                                tracing::debug!("Sending synthetic Super key-down to destination (keyboard-initiated)");
                                 if let Err(e) = peer.send(&Message::InputEvent(payload)).await {
                                     tracing::error!("Failed to send synthetic Super: {}", e);
                                 }
                             }
+                        } else {
+                            tracing::debug!("Skipping synthetic Super key-down (CLI-initiated switch)");
+                            // Add delay for CLI-initiated switches to let the terminal settle
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         }
 
                         input_grabber.start();
@@ -1354,6 +1360,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                             cursor_pos,
                                             screen_height,
                                             screen_width,
+                                            true, // keyboard-initiated (IPC Move from keybind)
                                         ).await {
                                             IpcResponse::Error { message: format!("Transfer failed: {}", e) }
                                         } else {
@@ -1376,6 +1383,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         cursor_pos,
                                         screen_height,
                                         screen_width,
+                                        true, // keyboard-initiated (IPC Move from keybind)
                                     ).await {
                                         IpcResponse::Error { message: format!("Transfer failed: {}", e) }
                                     } else {
@@ -1568,14 +1576,16 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         Err(_) => ((0, 0), 1920, 1080), // Fallback
                                     };
 
-                                    // Initiate transfer
-                                    match transfer_manager.initiate_transfer(dir, cursor_pos, screen_height, screen_width).await {
+                                    // Initiate transfer (CLI-initiated, not keyboard)
+                                    info!("IPC Switch: calling initiate_transfer");
+                                    match transfer_manager.initiate_transfer(dir, cursor_pos, screen_height, screen_width, false).await {
                                         Ok(()) => {
                                             let machine_name = config.machines.neighbors
                                                 .iter()
                                                 .find(|n| n.direction == dir)
                                                 .map(|n| n.name.clone())
                                                 .unwrap_or_else(|| format!("{:?}", dir));
+                                            info!("IPC Switch: initiate_transfer succeeded, returning response to CLI");
                                             IpcResponse::Transferred { to_machine: machine_name }
                                         }
                                         Err(e) => IpcResponse::Error {

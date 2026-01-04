@@ -129,6 +129,7 @@ fn find_input_devices() -> Vec<PathBuf> {
     }
 
     // Method 2: Scan all /dev/input/event* and check capabilities
+    // Be more restrictive - only grab devices that are ACTUALLY keyboards or mice
     if let Ok(entries) = fs::read_dir("/dev/input") {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -140,10 +141,28 @@ fn find_input_devices() -> Vec<PathBuf> {
 
                 // Try to open and check if it's a keyboard or mouse
                 if let Ok(dev) = Device::open(&path) {
-                    let has_keys = dev.supported_keys().map(|k| k.iter().count() > 0).unwrap_or(false);
+                    let dev_name = dev.name().unwrap_or("unknown").to_lowercase();
+
+                    // Skip devices that are clearly NOT keyboard/mouse
+                    if dev_name.contains("power")
+                        || dev_name.contains("sleep")
+                        || dev_name.contains("button")
+                        || dev_name.contains("wmi")
+                        || dev_name.contains("hotkey")
+                        || dev_name.contains("consumer control")
+                        || dev_name.contains("video bus")
+                        || dev_name.contains("dualsense")
+                        || dev_name.contains("dualshock")
+                        || dev_name.contains("controller touchpad")
+                    {
+                        tracing::debug!("Skipping non-keyboard/mouse device: {}", dev_name);
+                        continue;
+                    }
+
+                    let has_keys = dev.supported_keys().map(|k| k.iter().count() > 10).unwrap_or(false);
                     let has_rel = dev.supported_relative_axes().map(|r| r.iter().count() > 0).unwrap_or(false);
 
-                    // Include if it has keys (keyboard) or relative axes (mouse)
+                    // A real keyboard has many keys (>10), a real mouse has relative axes
                     if has_keys || has_rel {
                         let dev_name = dev.name().unwrap_or("unknown");
                         tracing::debug!("Found input device: {} at {} (keys={}, rel={})",
@@ -181,6 +200,8 @@ fn run_evdev_grabber(
         Idle,
         Grabbed,
         Recovery,
+        /// Post-recovery: waiting for Super key release while keeping synthetic key-down active
+        PostRecovery,
     }
 
     let mut devices: HashMap<PathBuf, Device> = HashMap::new();
@@ -190,6 +211,9 @@ fn run_evdev_grabber(
     let mut super_held = false;
     let mut super_was_held_at_start = false; // Track if Super was held when recovery started
     let mut recovery_hotkey_sent = false;
+
+    // Virtual keyboard for synthetic Super key-down (kept alive in PostRecovery state)
+    let mut synthetic_keyboard: Option<evdev::uinput::VirtualDevice> = None;
 
     // Key codes
     const KEY_LEFTMETA: u16 = 125;
@@ -211,6 +235,9 @@ fn run_evdev_grabber(
                     devices.clear();
                     tracing::info!("Opening and grabbing input devices...");
 
+                    // Small delay before starting grabs to let any pending events settle
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+
                     for path in &device_paths {
                         match Device::open(path) {
                             Ok(mut dev) => {
@@ -228,6 +255,8 @@ fn run_evdev_grabber(
                                         tracing::warn!("Cannot grab {}: {}", name, e);
                                     }
                                 }
+                                // Small delay between grabs to avoid overwhelming libinput
+                                std::thread::sleep(std::time::Duration::from_millis(10));
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to open {}: {}", path.display(), e);
@@ -422,8 +451,95 @@ fn run_evdev_grabber(
                 // End recovery mode if hotkey was detected or Super was released
                 if should_end_recovery {
                     tracing::info!("Recovery mode ended ({})", end_reason);
-                    devices.clear();
                     recovery_active.store(0, Ordering::SeqCst);
+
+                    // If we detected a hotkey and Super is still held, we need to send a
+                    // synthetic Super key-down via uinput. This informs libinput that Super
+                    // is pressed, since it never saw the original key-down (it was grabbed).
+                    // CRITICAL: We must keep the virtual device alive until Super is released,
+                    // otherwise the kernel will auto-send key-up when the device is destroyed.
+                    if recovery_hotkey_sent && super_held {
+                        tracing::info!("RECOVERY: Super still held, entering PostRecovery to maintain synthetic key-down");
+
+                        // Create virtual keyboard and send Super key-down
+                        match create_synthetic_keyboard_with_super_down() {
+                            Ok(virt_dev) => {
+                                synthetic_keyboard = Some(virt_dev);
+                                // Keep devices open to monitor for Super release
+                                state = State::PostRecovery;
+                                tracing::info!("PostRecovery: synthetic keyboard created, monitoring for Super release");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create synthetic keyboard: {}", e);
+                                devices.clear();
+                                state = State::Idle;
+                            }
+                        }
+                    } else {
+                        // Super already released or no hotkey detected, clean up normally
+                        devices.clear();
+                        state = State::Idle;
+                    }
+                }
+            }
+
+            State::PostRecovery => {
+                // In post-recovery mode, we're keeping the synthetic keyboard alive
+                // with Super key-down. Monitor physical keyboard for Super release.
+                if is_active {
+                    // New grab starting, clean up and transition
+                    tracing::info!("PostRecovery: new grab requested, cleaning up");
+                    if let Some(ref mut virt_dev) = synthetic_keyboard {
+                        // Send Super key-up before destroying
+                        let key_up = evdev::InputEvent::new(evdev::EventType::KEY, KEY_LEFTMETA, 0);
+                        let syn = evdev::InputEvent::new(evdev::EventType::SYNCHRONIZATION, 0, 0);
+                        let _ = virt_dev.emit(&[key_up, syn]);
+                    }
+                    synthetic_keyboard = None;
+                    devices.clear();
+                    state = State::Idle;
+                    continue;
+                }
+
+                // Monitor for Super key release on physical keyboard
+                let mut super_released = false;
+                for dev in devices.values_mut() {
+                    if let Ok(events) = dev.fetch_events() {
+                        for ev in events {
+                            if let InputEventKind::Key(key) = ev.kind() {
+                                let keycode = key.code();
+                                let released = ev.value() == 0;
+
+                                // Check for Super release
+                                if (keycode == KEY_LEFTMETA || keycode == KEY_RIGHTMETA) && released {
+                                    super_released = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if super_released {
+                        break;
+                    }
+                }
+
+                // Handle Super release outside the borrow
+                if super_released {
+                    tracing::info!("PostRecovery: Super released, sending synthetic key-up and cleaning up");
+
+                    // Send synthetic Super key-up
+                    if let Some(ref mut virt_dev) = synthetic_keyboard {
+                        let key_up = evdev::InputEvent::new(evdev::EventType::KEY, KEY_LEFTMETA, 0);
+                        let syn = evdev::InputEvent::new(evdev::EventType::SYNCHRONIZATION, 0, 0);
+                        if let Err(e) = virt_dev.emit(&[key_up, syn]) {
+                            tracing::warn!("Failed to send synthetic Super key-up: {}", e);
+                        }
+                    }
+
+                    // Clean up
+                    synthetic_keyboard = None;
+                    devices.clear();
+                    super_held = false;
                     state = State::Idle;
                 }
             }
@@ -528,6 +644,84 @@ pub fn send_synthetic_key_ups(keycodes: &[u16]) -> Result<(), std::io::Error> {
 
     tracing::debug!("Synthetic key-ups sent successfully");
     Ok(())
+}
+
+/// Send synthetic key-down events via uinput for specified keycodes.
+/// This creates a temporary virtual keyboard, sends the events, and destroys it.
+/// Used to inform libinput about keys that are physically held after ungrab.
+/// NOTE: The device is destroyed after this function returns, which will trigger
+/// an automatic key-up. Use `create_synthetic_keyboard_with_super_down` if you
+/// need to keep the key pressed.
+pub fn send_synthetic_key_downs(keycodes: &[u16]) -> Result<(), std::io::Error> {
+    use evdev::uinput::VirtualDeviceBuilder;
+    use evdev::{AttributeSet, Key};
+
+    if keycodes.is_empty() {
+        return Ok(());
+    }
+
+    tracing::debug!("Creating uinput device to send synthetic key-downs for {:?}", keycodes);
+
+    // Build the key set for all keys we might send
+    let mut keys = AttributeSet::<Key>::new();
+    for &keycode in keycodes {
+        keys.insert(Key::new(keycode));
+    }
+
+    // Create a virtual keyboard device
+    let mut device = VirtualDeviceBuilder::new()?
+        .name("hyprkvm-synthetic")
+        .with_keys(&keys)?
+        .build()?;
+
+    // Brief pause to let the device be recognized
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    // Send key-down events for each keycode
+    for &keycode in keycodes {
+        let key_down = evdev::InputEvent::new(evdev::EventType::KEY, keycode, 1);
+        let syn = evdev::InputEvent::new(evdev::EventType::SYNCHRONIZATION, 0, 0);
+        device.emit(&[key_down, syn])?;
+        tracing::debug!("Sent synthetic key-down for keycode {}", keycode);
+    }
+
+    // Flush and brief pause before device is dropped
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    tracing::debug!("Synthetic key-downs sent successfully");
+    Ok(())
+}
+
+/// Create a virtual keyboard with Super (Left Meta) key pressed.
+/// Returns the device which must be kept alive to maintain the key-down state.
+/// When the device is dropped, the kernel will automatically send key-up.
+fn create_synthetic_keyboard_with_super_down() -> Result<evdev::uinput::VirtualDevice, std::io::Error> {
+    use evdev::uinput::VirtualDeviceBuilder;
+    use evdev::{AttributeSet, Key};
+
+    tracing::debug!("Creating persistent synthetic keyboard with Super key-down");
+
+    // Build key set with Super keys
+    let mut keys = AttributeSet::<Key>::new();
+    keys.insert(Key::new(125)); // KEY_LEFTMETA
+    keys.insert(Key::new(126)); // KEY_RIGHTMETA
+
+    // Create virtual keyboard
+    let mut device = VirtualDeviceBuilder::new()?
+        .name("hyprkvm-super-hold")
+        .with_keys(&keys)?
+        .build()?;
+
+    // Brief pause to let the device be recognized
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Send Super key-down
+    let key_down = evdev::InputEvent::new(evdev::EventType::KEY, 125, 1); // KEY_LEFTMETA
+    let syn = evdev::InputEvent::new(evdev::EventType::SYNCHRONIZATION, 0, 0);
+    device.emit(&[key_down, syn])?;
+
+    tracing::info!("Synthetic keyboard created with Super key-down, device will be kept alive");
+    Ok(device)
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -23,6 +23,8 @@ pub enum TransferState {
         target: Direction,
         transfer_id: u64,
         started_at: Instant,
+        /// True if transfer was triggered via keyboard (Super+Arrow)
+        keyboard_initiated: bool,
     },
 
     /// We sent control away, forwarding input
@@ -30,6 +32,8 @@ pub enum TransferState {
         target: Direction,
         transfer_id: u64,
         entered_at: Instant,
+        /// True if transfer was triggered via keyboard (Super+Arrow)
+        keyboard_initiated: bool,
     },
 
     /// We received control from another machine
@@ -58,7 +62,9 @@ impl TransferState {
 #[derive(Debug, Clone)]
 pub enum TransferEvent {
     /// Start capturing and forwarding input
-    StartCapture { direction: Direction },
+    /// `keyboard_initiated` is true if the transfer was triggered via keyboard (Super+Arrow),
+    /// false if triggered via CLI or other non-keyboard means
+    StartCapture { direction: Direction, keyboard_initiated: bool },
     /// Stop capturing, return to local
     StopCapture,
     /// Start injecting received input
@@ -102,12 +108,15 @@ impl TransferManager {
     }
 
     /// Initiate transfer to a direction (mouse or keyboard edge hit)
+    /// `keyboard_initiated` should be true if this was triggered via Super+Arrow keybind,
+    /// false if triggered via CLI, mouse edge, or other non-keyboard means
     pub async fn initiate_transfer(
         &self,
         direction: Direction,
         cursor_pos: (i32, i32),
         screen_height: u32,
         screen_width: u32,
+        keyboard_initiated: bool,
     ) -> Result<(), TransferError> {
         let mut state = self.state.write().await;
 
@@ -147,6 +156,7 @@ impl TransferManager {
             target: direction,
             transfer_id,
             started_at: Instant::now(),
+            keyboard_initiated,
         };
 
         // Send Enter message
@@ -176,6 +186,7 @@ impl TransferManager {
             TransferState::Initiating {
                 target,
                 transfer_id,
+                keyboard_initiated,
                 ..
             } => {
                 if *transfer_id != ack.transfer_id {
@@ -196,22 +207,25 @@ impl TransferManager {
                 }
 
                 tracing::info!(
-                    "Transfer accepted, cursor at {:?}",
-                    ack.actual_cursor_pos
+                    "Transfer accepted, cursor at {:?}, keyboard_initiated={}",
+                    ack.actual_cursor_pos,
+                    keyboard_initiated
                 );
 
                 let direction = *target;
                 let tid = *transfer_id;
+                let kbd_init = *keyboard_initiated;
 
                 *state = TransferState::RemoteActive {
                     target: direction,
                     transfer_id: tid,
                     entered_at: Instant::now(),
+                    keyboard_initiated: kbd_init,
                 };
 
                 // Start capturing input
                 self.event_tx
-                    .send(TransferEvent::StartCapture { direction })
+                    .send(TransferEvent::StartCapture { direction, keyboard_initiated: kbd_init })
                     .await
                     .map_err(|_| TransferError::ChannelClosed)?;
 
