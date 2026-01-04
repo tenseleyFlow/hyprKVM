@@ -197,12 +197,14 @@ fn run_evdev_grabber(
                 // Ungrab and close all devices
                 tracing::info!("Releasing {} input devices", devices.len());
 
-                // Key codes for modifiers and arrow keys that might be held
-                let keys_to_release: &[u16] = &[
-                    125, 126,           // KEY_LEFTMETA, KEY_RIGHTMETA (Super)
-                    42, 54,             // KEY_LEFTSHIFT, KEY_RIGHTSHIFT
-                    29, 97,             // KEY_LEFTCTRL, KEY_RIGHTCTRL
-                    56, 100,            // KEY_LEFTALT, KEY_RIGHTALT
+                // Keys we care about: modifiers and arrows
+                let modifier_keys: &[u16] = &[
+                    125, 126,  // KEY_LEFTMETA, KEY_RIGHTMETA (Super)
+                    42, 54,    // KEY_LEFTSHIFT, KEY_RIGHTSHIFT
+                    29, 97,    // KEY_LEFTCTRL, KEY_RIGHTCTRL
+                    56, 100,   // KEY_LEFTALT, KEY_RIGHTALT
+                ];
+                let arrow_keys: &[u16] = &[
                     103, 108, 105, 106, // KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT
                 ];
 
@@ -210,29 +212,55 @@ fn run_evdev_grabber(
                     // First ungrab so libinput can receive events
                     if let Err(e) = dev.ungrab() {
                         tracing::warn!("Failed to ungrab {}: {}", path.display(), e);
-                    } else {
-                        tracing::debug!("Released {}", path.display());
+                        continue;
+                    }
+                    tracing::debug!("Released {}", path.display());
+
+                    // Query actual physical key state AFTER ungrab
+                    let key_state = match dev.get_key_state() {
+                        Ok(state) => state,
+                        Err(e) => {
+                            tracing::debug!("Could not query key state for {}: {}", path.display(), e);
+                            continue;
+                        }
+                    };
+
+                    // For ARROW keys: if NOT pressed, send UP to clear stale state
+                    // (Hyprland thought they were pressed from before grab)
+                    for &keycode in arrow_keys {
+                        let key = evdev::Key::new(keycode);
+                        if !key_state.contains(key) {
+                            // Key is not pressed - send UP to clear stale state
+                            let key_event = evdev::InputEvent::new(
+                                evdev::EventType::KEY, keycode, 0,
+                            );
+                            let syn_event = evdev::InputEvent::new(
+                                evdev::EventType::SYNCHRONIZATION, 0, 0,
+                            );
+                            let _ = dev.send_events(&[key_event, syn_event]);
+                        }
+                        // If key IS pressed, don't send anything - user is still holding it
                     }
 
-                    // CRITICAL FIX: Synthesize key-up events AFTER ungrabbing!
-                    // When we grabbed the device, the user was holding Super+Arrow.
-                    // If they're STILL holding those keys, libinput's state from
-                    // before the grab still has those keys pressed. By sending
-                    // synthetic key-ups now (after ungrab), libinput sees them
-                    // as releases, and subsequent presses will be fresh edges.
-                    for &keycode in keys_to_release {
-                        let key_event = evdev::InputEvent::new(
-                            evdev::EventType::KEY,
-                            keycode,
-                            0, // 0 = released
-                        );
-                        let syn_event = evdev::InputEvent::new(
-                            evdev::EventType::SYNCHRONIZATION,
-                            0, // SYN_REPORT
-                            0,
-                        );
-                        // Ignore errors - not all devices support all keys
-                        let _ = dev.send_events(&[key_event, syn_event]);
+                    // For MODIFIER keys: if pressed, send UP then DOWN (fresh edge)
+                    // This gives Hyprland a clean state transition
+                    for &keycode in modifier_keys {
+                        let key = evdev::Key::new(keycode);
+                        if key_state.contains(key) {
+                            // Key is pressed - send UP then DOWN for fresh edge
+                            let up_event = evdev::InputEvent::new(
+                                evdev::EventType::KEY, keycode, 0,
+                            );
+                            let down_event = evdev::InputEvent::new(
+                                evdev::EventType::KEY, keycode, 1,
+                            );
+                            let syn_event = evdev::InputEvent::new(
+                                evdev::EventType::SYNCHRONIZATION, 0, 0,
+                            );
+                            let _ = dev.send_events(&[up_event, syn_event, down_event, syn_event]);
+                            tracing::debug!("Sent UP+DOWN for held modifier key {}", keycode);
+                        }
+                        // If not pressed, don't send anything - already released
                     }
 
                     // Device is dropped here, closing the fd

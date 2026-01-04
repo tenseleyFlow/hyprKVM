@@ -1,260 +1,3 @@
-2026-01-04T11:35:37.652161Z DEBUG Connecting to left at 192.168.0.84:24850...
-2026-01-04T11:35:37.652171Z  INFO Connecting to 192.168.0.84:24850
-2026-01-04T11:35:37.652754Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
-2026-01-04T11:35:40.653765Z DEBUG Connecting to left at 192.168.0.84:24850...
-2026-01-04T11:35:40.653775Z  INFO Connecting to 192.168.0.84:24850
-2026-01-04T11:35:40.654366Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
-2026-01-04T11:35:41.206615Z DEBUG IPC: connection accepted
-2026-01-04T11:35:41.206643Z DEBUG IPC: received Move { direction: Right }
-2026-01-04T11:35:41.206650Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:35:41.206657Z  INFO IPC Move Right: state=Local
-2026-01-04T11:35:41.206836Z  INFO   edge_check: has monitor in direction Right
-2026-01-04T11:35:41.206839Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
-2026-01-04T11:35:41.206842Z  INFO IPC Move Right: doing local movefocus r
-2026-01-04T11:35:41.207371Z  INFO   movefocus succeeded
-2026-01-04T11:35:41.207413Z DEBUG IPC: got response, sending to client
-2026-01-04T11:35:41.500272Z DEBUG IPC: connection accepted
-2026-01-04T11:35:41.500294Z DEBUG IPC: received Move { direction: Right }
-2026-01-04T11:35:41.500298Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:35:41.500303Z  INFO IPC Move Right: state=Local
-2026-01-04T11:35:41.500422Z  INFO   edge_check: has monitor in direction Right
-2026-01-04T11:35:41.500426Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
-2026-01-04T11:35:41.500429Z  INFO IPC Move Right: doing local movefocus r
-2026-01-04T11:35:41.501028Z  INFO   movefocus succeeded
-2026-01-04T11:35:41.501037Z DEBUG IPC: got response, sending to client
-2026-01-04T11:35:42.039601Z DEBUG IPC: connection accepted
-2026-01-04T11:35:42.039623Z DEBUG IPC: received Move { direction: Right }
-2026-01-04T11:35:42.039627Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:35:42.039632Z  INFO IPC Move Right: state=Local
-2026-01-04T11:35:42.039752Z  INFO   edge_check: has monitor in direction Right
-2026-01-04T11:35:42.039757Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
-2026-01-04T11:35:42.039759Z  INFO IPC Move Right: doing local movefocus r
-2026-01-04T11:35:42.040123Z  INFO   movefocus succeeded
-2026-01-04T11:35:42.040138Z DEBUG IPC: got response, sending to client
-^C2026-01-04T11:35:43.343470Z  INFO Shutting down...
-
-hyprKVM on  trunk is 📦 v0.1.0 via  v1.91.1 took 1m5s
-❯ nix develop --command cargo run --release -p hyprkvm-daemon -- -v daemon
-warning: Git tree '/home/mfwolffe/GithubOrgs/tenseleyFlow/hyprKVM' is dirty
-HyprKVM development shell
-Rust: rustc 1.92.0 (ded5c06cf 2025-12-08)
-
-Run 'cargo build' to compile
-    Finished `release` profile [optimized] target(s) in 0.10s
-     Running `target/release/hyprkvm -v daemon`
-2026-01-04T11:41:43.640644Z  INFO Starting HyprKVM daemon...
-2026-01-04T11:41:43.640710Z  INFO Machine name: nixos
-2026-01-04T11:41:43.640713Z  INFO Listening on port: 24850
-2026-01-04T11:41:43.640715Z  INFO Connecting to Hyprland...
-2026-01-04T11:41:43.640864Z  INFO Connected to Hyprland. Monitors: 3
-2026-01-04T11:41:43.640866Z  INFO   HDMI-A-1 at (4480, 0) 3840x2160
-2026-01-04T11:41:43.640868Z  INFO   HDMI-A-2 at (1920, 0) 2560x1440
-2026-01-04T11:41:43.640870Z  INFO   DP-3 at (0, 0) 1920x1080
-2026-01-04T11:41:43.640874Z  INFO   Network neighbor: cachyos (left) at 192.168.0.84:24850
-2026-01-04T11:41:43.640879Z  INFO Starting edge capture for: [Left]
-2026-01-04T11:41:43.640934Z  INFO Server listening on 0.0.0.0:24850
-2026-01-04T11:41:43.640938Z  INFO Listening for connections on 0.0.0.0:24850
-2026-01-04T11:41:43.640958Z DEBUG Connecting to left at 192.168.0.84:24850...
-2026-01-04T11:41:43.640968Z  INFO Connecting to 192.168.0.84:24850
-2026-01-04T11:41:43.640972Z  INFO Daemon running. Move mouse to screen edges to trigger transfer. Press Ctrl+C to stop.
-2026-01-04T11:41:43.641007Z  INFO IPC server listening on /run/user/1000/hyprkvm.sock
-2026-01-04T11:41:43.641018Z DEBUG Found input device: Keychron Keychron K8 HE at /dev/input/event2 (keys=true, rel=false)
-2026-01-04T11:41:43.641072Z DEBUG Bound new global [63] wl_output v4
-2026-01-04T11:41:43.641077Z DEBUG Bound new global [64] wl_output v4
-2026-01-04T11:41:43.641079Z DEBUG Bound new global [65] wl_output v4
-2026-01-04T11:41:43.641081Z DEBUG Bound new global [9] zxdg_output_manager_v1 v3
-2026-01-04T11:41:43.641087Z DEBUG Bound new global [1] wl_seat v7
-2026-01-04T11:41:43.641192Z DEBUG supported wl_shm format Argb8888
-2026-01-04T11:41:43.641197Z DEBUG supported wl_shm format Xrgb8888
-2026-01-04T11:41:43.641199Z DEBUG supported wl_shm format Xbgr8888
-2026-01-04T11:41:43.641201Z DEBUG supported wl_shm format Abgr8888
-2026-01-04T11:41:43.641202Z DEBUG supported wl_shm format Xrgb2101010
-2026-01-04T11:41:43.641204Z DEBUG supported wl_shm format Argb2101010
-2026-01-04T11:41:43.641206Z DEBUG supported wl_shm format Xbgr2101010
-2026-01-04T11:41:43.641207Z DEBUG supported wl_shm format Abgr2101010
-2026-01-04T11:41:43.641249Z  INFO After roundtrips: 3 outputs detected
-2026-01-04T11:41:43.641265Z DEBUG Multiple candidates for output 2560x1440: ["HDMI-A-1", "HDMI-A-2"]
-2026-01-04T11:41:43.641268Z DEBUG Multiple candidates for output 1920x1080: ["HDMI-A-1", "DP-3"]
-2026-01-04T11:41:43.641270Z  INFO Assigned remaining output 2560x1440 to monitor HDMI-A-1 at (4480, 0)
-2026-01-04T11:41:43.641272Z  INFO Assigned remaining output 1920x1080 to monitor DP-3 at (0, 0)
-2026-01-04T11:41:43.641274Z  INFO Creating barriers with 3 outputs:
-2026-01-04T11:41:43.641275Z  INFO   Output at (0, 0) size 3072x1728
-2026-01-04T11:41:43.641277Z  INFO   Output at (4480, 0) size 2560x1440
-2026-01-04T11:41:43.641278Z  INFO   Output at (0, 0) size 1920x1080
-2026-01-04T11:41:43.641279Z  INFO Screen bounds: (0, 0) to (7040, 1728)
-2026-01-04T11:41:43.641281Z  INFO   Left edge -> output at Some((0, 0, 3072, 1728))
-2026-01-04T11:41:43.641289Z  INFO Creating Left barrier on output Some("at (0, 0)"), size 1x1728
-2026-01-04T11:41:43.641389Z  INFO Edge capture running with 1 barriers
-2026-01-04T11:41:43.641455Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
-2026-01-04T11:41:43.641785Z  INFO Poll #0: state=Local, peers=[]
-2026-01-04T11:41:43.700610Z DEBUG Found input device: Sony Interactive Entertainment DualSense Wireless Controller at /dev/input/event16 (k
-2026-01-04T11:41:43.744597Z DEBUG Found input device: HP, Inc HyperX QuadCast S Consumer Control at /dev/input/event14 (keys=true, rel=true
-2026-01-04T11:41:43.805601Z DEBUG Found input device: HP, Inc HyperX QuadCast S Consumer Control at /dev/input/event7 (keys=true, rel=false
-2026-01-04T11:41:43.817611Z DEBUG Found input device: Asus WMI hotkeys at /dev/input/event6 (keys=true, rel=false)
-2026-01-04T11:41:43.829589Z DEBUG Found input device: Power Button at /dev/input/event5 (keys=true, rel=false)
-2026-01-04T11:41:43.841627Z DEBUG Found input device: Power Button at /dev/input/event4 (keys=true, rel=false)
-2026-01-04T11:41:43.857591Z DEBUG Found input device: Sleep Button at /dev/input/event3 (keys=true, rel=false)
-2026-01-04T11:41:43.872590Z  INFO Found 13 input device paths
-2026-01-04T11:41:43.872596Z DEBUG   /dev/input/event12
-2026-01-04T11:41:43.872597Z DEBUG   /dev/input/event13
-2026-01-04T11:41:43.872598Z DEBUG   /dev/input/event1
-2026-01-04T11:41:43.872599Z DEBUG   /dev/input/event0
-2026-01-04T11:41:43.872600Z DEBUG   /dev/input/event18
-2026-01-04T11:41:43.872601Z DEBUG   /dev/input/event2
-2026-01-04T11:41:43.872601Z DEBUG   /dev/input/event16
-2026-01-04T11:41:43.872602Z DEBUG   /dev/input/event14
-2026-01-04T11:41:43.872603Z DEBUG   /dev/input/event7
-2026-01-04T11:41:43.872604Z DEBUG   /dev/input/event6
-2026-01-04T11:41:43.872605Z DEBUG   /dev/input/event5
-2026-01-04T11:41:43.872606Z DEBUG   /dev/input/event4
-2026-01-04T11:41:43.872607Z DEBUG   /dev/input/event3
-2026-01-04T11:41:46.642481Z DEBUG Connecting to left at 192.168.0.84:24850...
-2026-01-04T11:41:46.642494Z  INFO Connecting to 192.168.0.84:24850
-2026-01-04T11:41:46.643022Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
-2026-01-04T11:41:49.643893Z DEBUG Connecting to left at 192.168.0.84:24850...
-2026-01-04T11:41:49.643904Z  INFO Connecting to 192.168.0.84:24850
-2026-01-04T11:41:49.644374Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
-2026-01-04T11:41:52.645426Z DEBUG Connecting to left at 192.168.0.84:24850...
-2026-01-04T11:41:52.645436Z  INFO Connecting to 192.168.0.84:24850
-2026-01-04T11:41:52.645848Z  INFO Connected to 192.168.0.84:24850
-2026-01-04T11:41:52.646469Z  INFO Connected to cachyos (left)
-2026-01-04T11:41:53.678368Z DEBUG Received from Left: Enter(EnterPayload { from_direction: Left, cursor_pos: EdgeRelative(0.340277777777777
-2026-01-04T11:41:53.678385Z  INFO Received Enter from Left
-2026-01-04T11:41:53.678388Z  INFO Receiving control from Left, cursor at (0, 735)
-2026-01-04T11:41:53.678392Z  INFO Positioned cursor at (0, 735)
-2026-01-04T11:41:53.678398Z  INFO Starting input injection from Left
-2026-01-04T11:41:53.685823Z  INFO Input emulator created
-2026-01-04T11:41:53.685851Z  INFO Sending EnterAck(EnterAckPayload { success: true, transfer_id: 1, actual_cursor_pos: Some((0, 735)), erro
-2026-01-04T11:41:53.687185Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 0, timestamp_us: 1767526913686379, event: Ke
-2026-01-04T11:41:53.687198Z DEBUG RECV KeyDown: keycode=125 (LEFTMETA)
-2026-01-04T11:41:53.687202Z DEBUG INJECT KEY: LEFTMETA DOWN (keycode=125, modifiers: depressed=0x0, super=false)
-2026-01-04T11:41:53.687212Z DEBUG INJECT MODIFIERS: depressed=0x40 (super=true)
-2026-01-04T11:41:53.860449Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 1, timestamp_us: 1767526913860533, event: Ke
-2026-01-04T11:41:53.860459Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
-2026-01-04T11:41:53.860461Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:54.823493Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 2, timestamp_us: 1767526914823512, event: Ke
-2026-01-04T11:41:54.823504Z DEBUG RECV KeyDown: keycode=106 (RIGHT)
-2026-01-04T11:41:54.823508Z DEBUG INJECT KEY: RIGHT DOWN (keycode=106, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:54.830973Z DEBUG IPC: connection accepted
-2026-01-04T11:41:54.830999Z DEBUG IPC: received Move { direction: Right }
-2026-01-04T11:41:54.831003Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:41:54.831009Z  INFO IPC Move Right: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 468699,
-2026-01-04T11:41:54.831135Z  INFO   edge_check: has monitor in direction Right
-2026-01-04T11:41:54.831139Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
-2026-01-04T11:41:54.831142Z  INFO IPC Move Right: doing local movefocus r
-2026-01-04T11:41:54.831471Z  INFO   movefocus succeeded
-2026-01-04T11:41:54.831480Z DEBUG IPC: got response, sending to client
-2026-01-04T11:41:55.040554Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 3, timestamp_us: 1767526915040621, event: Ke
-2026-01-04T11:41:55.040565Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
-2026-01-04T11:41:55.040567Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:55.838810Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 4, timestamp_us: 1767526915838729, event: Ke
-2026-01-04T11:41:55.838821Z DEBUG RECV KeyDown: keycode=105 (LEFT)
-2026-01-04T11:41:55.838823Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:55.846307Z DEBUG IPC: connection accepted
-2026-01-04T11:41:55.846332Z DEBUG IPC: received Move { direction: Left }
-2026-01-04T11:41:55.846336Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:41:55.846340Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 468699,
-2026-01-04T11:41:55.846529Z  INFO   edge_check: has monitor in direction Left
-2026-01-04T11:41:55.846534Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
-2026-01-04T11:41:55.846541Z  INFO IPC Move Left: doing local movefocus l
-2026-01-04T11:41:55.847070Z  INFO   movefocus succeeded
-2026-01-04T11:41:55.847085Z DEBUG IPC: got response, sending to client
-2026-01-04T11:41:55.995833Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 5, timestamp_us: 1767526915994811, event: Ke
-2026-01-04T11:41:55.995844Z DEBUG RECV KeyUp: keycode=105 (LEFT)
-2026-01-04T11:41:55.995846Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:56.198245Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 6, timestamp_us: 1767526916198271, event: Ke
-2026-01-04T11:41:56.198255Z DEBUG RECV KeyDown: keycode=105 (LEFT)
-2026-01-04T11:41:56.198257Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:56.205673Z DEBUG IPC: connection accepted
-2026-01-04T11:41:56.205700Z DEBUG IPC: received Move { direction: Left }
-2026-01-04T11:41:56.205707Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:41:56.206790Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 468699,
-2026-01-04T11:41:56.206962Z  INFO   edge_check: has monitor in direction Left
-2026-01-04T11:41:56.206966Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
-2026-01-04T11:41:56.206968Z  INFO IPC Move Left: doing local movefocus l
-2026-01-04T11:41:56.207387Z  INFO   movefocus succeeded
-2026-01-04T11:41:56.207398Z DEBUG IPC: got response, sending to client
-2026-01-04T11:41:56.362048Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 7, timestamp_us: 1767526916362058, event: Ke
-2026-01-04T11:41:56.362059Z DEBUG RECV KeyUp: keycode=105 (LEFT)
-2026-01-04T11:41:56.362060Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:56.635121Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 8, timestamp_us: 1767526916635149, event: Ke
-2026-01-04T11:41:56.635133Z DEBUG RECV KeyDown: keycode=105 (LEFT)
-2026-01-04T11:41:56.635135Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:56.643108Z DEBUG IPC: connection accepted
-2026-01-04T11:41:56.643131Z DEBUG IPC: received Move { direction: Left }
-2026-01-04T11:41:56.643136Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:41:56.643141Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 468699,
-2026-01-04T11:41:56.643362Z  INFO   edge_check: has monitor in direction Left
-2026-01-04T11:41:56.643368Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
-2026-01-04T11:41:56.643371Z  INFO IPC Move Left: doing local movefocus l
-2026-01-04T11:41:56.644129Z  INFO   movefocus succeeded
-2026-01-04T11:41:56.644168Z DEBUG IPC: got response, sending to client
-2026-01-04T11:41:56.816630Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 9, timestamp_us: 1767526916816636, event: Ke
-2026-01-04T11:41:56.816640Z DEBUG RECV KeyUp: keycode=105 (LEFT)
-2026-01-04T11:41:56.816643Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:57.157528Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 10, timestamp_us: 1767526917157382, event: K
-2026-01-04T11:41:57.157543Z DEBUG RECV KeyDown: keycode=105 (LEFT)
-2026-01-04T11:41:57.157546Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:57.165167Z DEBUG IPC: connection accepted
-2026-01-04T11:41:57.165188Z DEBUG IPC: received Move { direction: Left }
-2026-01-04T11:41:57.165192Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:41:57.165196Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 468699,
-2026-01-04T11:41:57.165616Z  INFO   edge_check: active window at (967,52) size 931x1006, 3 clients on monitor
-2026-01-04T11:41:57.165623Z  INFO   edge_check: has_window_in_direction=true -> at_edge=false
-2026-01-04T11:41:57.165645Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
-2026-01-04T11:41:57.165648Z  INFO IPC Move Left: doing local movefocus l
-2026-01-04T11:41:57.166028Z  INFO   movefocus succeeded
-2026-01-04T11:41:57.166037Z DEBUG IPC: got response, sending to client
-2026-01-04T11:41:57.340275Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 11, timestamp_us: 1767526917340289, event: K
-2026-01-04T11:41:57.340286Z DEBUG RECV KeyUp: keycode=105 (LEFT)
-2026-01-04T11:41:57.340288Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:58.958287Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 12, timestamp_us: 1767526918958306, event: P
-2026-01-04T11:41:59.441743Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 13, timestamp_us: 1767526919441775, event: K
-2026-01-04T11:41:59.441753Z DEBUG RECV KeyDown: keycode=105 (LEFT)
-2026-01-04T11:41:59.441755Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:41:59.449106Z DEBUG IPC: connection accepted
-2026-01-04T11:41:59.449128Z DEBUG IPC: received Move { direction: Left }
-2026-01-04T11:41:59.449131Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:41:59.449134Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 468699,
-2026-01-04T11:41:59.449472Z  INFO   edge_check: active window at (22,52) size 931x439, 3 clients on monitor
-2026-01-04T11:41:59.449476Z  INFO   edge_check: has_window_in_direction=false -> at_edge=true
-2026-01-04T11:41:59.449498Z  INFO IPC Move Left: at_edge=true, has_peer=true, neighbor=Some("cachyos")
-2026-01-04T11:41:59.449501Z  INFO Keyboard return: at edge, returning control to Left
-2026-01-04T11:41:59.449503Z  INFO Returning control to Left
-2026-01-04T11:41:59.449509Z  INFO Sending Leave(LeavePayload { to_direction: Left, cursor_pos: EdgeRelative(0.5), modifiers: ModifierState
-2026-01-04T11:41:59.449513Z DEBUG IPC: got response, sending to client
-2026-01-04T11:41:59.449542Z  INFO Stopping input injection
-2026-01-04T11:41:59.449544Z DEBUG RESET: Releasing key 125 (LEFTMETA)
-2026-01-04T11:41:59.449549Z DEBUG RESET: Releasing key 105 (LEFT)
-2026-01-04T11:41:59.449553Z DEBUG All keys reset complete
-2026-01-04T11:41:59.466206Z DEBUG Received from Left: LeaveAck
-2026-01-04T11:41:59.466211Z  INFO Received LeaveAck
-2026-01-04T11:42:08.246754Z DEBUG Received from Left: Enter(EnterPayload { from_direction: Left, cursor_pos: EdgeRelative(0.340277777777777
-2026-01-04T11:42:08.246768Z  INFO Received Enter from Left
-2026-01-04T11:42:08.246770Z  INFO Receiving control from Left, cursor at (0, 735)
-2026-01-04T11:42:08.246772Z  INFO Positioned cursor at (0, 735)
-2026-01-04T11:42:08.246775Z  INFO Starting input injection from Left
-2026-01-04T11:42:08.246778Z  INFO Sending EnterAck(EnterAckPayload { success: true, transfer_id: 2, actual_cursor_pos: Some((0, 735)), erro
-2026-01-04T11:42:08.248475Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 14, timestamp_us: 1767526928248545, event: K
-2026-01-04T11:42:08.248480Z DEBUG RECV KeyDown: keycode=125 (LEFTMETA)
-2026-01-04T11:42:08.248481Z DEBUG INJECT KEY: LEFTMETA DOWN (keycode=125, modifiers: depressed=0x0, super=false)
-2026-01-04T11:42:08.248486Z DEBUG INJECT MODIFIERS: depressed=0x40 (super=true)
-2026-01-04T11:42:08.443199Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 15, timestamp_us: 1767526928443254, event: K
-2026-01-04T11:42:08.443210Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
-2026-01-04T11:42:08.443212Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
-2026-01-04T11:42:11.734849Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 16, timestamp_us: 1767526931734888, event: P
-2026-01-04T11:42:13.252205Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 17, timestamp_us: 1767526933252227, event: K
-2026-01-04T11:42:13.252217Z DEBUG RECV KeyDown: keycode=105 (LEFT)
-2026-01-04T11:42:13.252218Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
-2026-01-04T11:42:13.259555Z DEBUG IPC: connection accepted
-2026-01-04T11:42:13.259576Z DEBUG IPC: received Move { direction: Left }
-2026-01-04T11:42:13.259580Z DEBUG IPC: sent to main loop, awaiting response
-2026-01-04T11:42:13.259584Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 2, entered_at: Instant { tv_sec: 468713,
-2026-01-04T11:42:13.259920Z  INFO   edge_check: active window at (22,52) size 931x439, 3 clients on monitor
-2026-01-04T11:42:13.259924Z  INFO   edge_check: has_window_in_direction=false -> at_edge=true
-2026-01-04T11:42:13.259947Z  INFO IPC Move Left: at_edge=true, has_peer=true, neighbor=Some("cachyos")
-2026-01-04T11:42:13.259949Z  INFO Keyboard return: at edge, returning control to Left
-2026-01-04T11:42:13.259951Z  INFO Returning control to Left
 2026-01-04T11:42:13.259957Z  INFO Sending Leave(LeavePayload { to_direction: Left, cursor_pos: EdgeRelative(0.5), modifiers: ModifierState
 2026-01-04T11:42:13.259960Z DEBUG IPC: got response, sending to client
 2026-01-04T11:42:13.259980Z  INFO Stopping input injection
@@ -298,4 +41,363 @@ Run 'cargo build' to compile
 2026-01-04T11:42:33.656505Z  INFO Connecting to 192.168.0.84:24850
 2026-01-04T11:42:33.656948Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
 ^C2026-01-04T11:42:34.020915Z  INFO Shutting down...
+
+hyprKVM on  trunk [!] is 📦 v0.1.0 via  v1.91.1 took 51s
+❯ nix develop --command cargo build --release --package hyprkvm-daemon
+HyprKVM development shell
+Rust: rustc 1.92.0 (ded5c06cf 2025-12-08)
+
+Run 'cargo build' to compile
+   Compiling hyprkvm-daemon v0.1.0 (/home/mfwolffe/GithubOrgs/tenseleyFlow/hyprKVM/hyprkvm-daemon)
+    Finished `release` profile [optimized] target(s) in 4.51s
+
+hyprKVM on  trunk [$] is 📦 v0.1.0 via  v1.91.1 took 5s
+❯ nix develop --command cargo run --release -p hyprkvm-daemon -- -v daemon
+HyprKVM development shell
+Rust: rustc 1.92.0 (ded5c06cf 2025-12-08)
+
+Run 'cargo build' to compile
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running `target/release/hyprkvm -v daemon`
+2026-01-04T11:54:06.020632Z  INFO Starting HyprKVM daemon...
+2026-01-04T11:54:06.020691Z  INFO Machine name: nixos
+2026-01-04T11:54:06.020694Z  INFO Listening on port: 24850
+2026-01-04T11:54:06.020696Z  INFO Connecting to Hyprland...
+2026-01-04T11:54:06.020840Z  INFO Connected to Hyprland. Monitors: 3
+2026-01-04T11:54:06.020843Z  INFO   HDMI-A-1 at (4480, 0) 3840x2160
+2026-01-04T11:54:06.020844Z  INFO   HDMI-A-2 at (1920, 0) 2560x1440
+2026-01-04T11:54:06.020846Z  INFO   DP-3 at (0, 0) 1920x1080
+2026-01-04T11:54:06.020848Z  INFO   Network neighbor: cachyos (left) at 192.168.0.84:24850
+2026-01-04T11:54:06.020852Z  INFO Starting edge capture for: [Left]
+2026-01-04T11:54:06.020900Z  INFO Server listening on 0.0.0.0:24850
+2026-01-04T11:54:06.020903Z  INFO Listening for connections on 0.0.0.0:24850
+2026-01-04T11:54:06.020920Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:54:06.020928Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:54:06.020930Z  INFO Daemon running. Move mouse to screen edges to trigger transfer. Press Ctrl+C to stop.
+2026-01-04T11:54:06.020962Z  INFO IPC server listening on /run/user/1000/hyprkvm.sock
+2026-01-04T11:54:06.020994Z DEBUG Found input device: Keychron Keychron K8 HE at /dev/input/event2 (keys=true, rel=false)
+2026-01-04T11:54:06.021016Z DEBUG Bound new global [63] wl_output v4
+2026-01-04T11:54:06.021022Z DEBUG Bound new global [64] wl_output v4
+2026-01-04T11:54:06.021023Z DEBUG Bound new global [65] wl_output v4
+2026-01-04T11:54:06.021026Z DEBUG Bound new global [9] zxdg_output_manager_v1 v3
+2026-01-04T11:54:06.021031Z DEBUG Bound new global [1] wl_seat v7
+2026-01-04T11:54:06.021147Z DEBUG supported wl_shm format Argb8888
+2026-01-04T11:54:06.021150Z DEBUG supported wl_shm format Xrgb8888
+2026-01-04T11:54:06.021152Z DEBUG supported wl_shm format Xbgr8888
+2026-01-04T11:54:06.021153Z DEBUG supported wl_shm format Abgr8888
+2026-01-04T11:54:06.021155Z DEBUG supported wl_shm format Xrgb2101010
+2026-01-04T11:54:06.021157Z DEBUG supported wl_shm format Argb2101010
+2026-01-04T11:54:06.021159Z DEBUG supported wl_shm format Xbgr2101010
+2026-01-04T11:54:06.021160Z DEBUG supported wl_shm format Abgr2101010
+2026-01-04T11:54:06.021203Z  INFO After roundtrips: 3 outputs detected
+2026-01-04T11:54:06.021217Z DEBUG Multiple candidates for output 2560x1440: ["HDMI-A-1", "HDMI-A-2"]
+2026-01-04T11:54:06.021220Z DEBUG Multiple candidates for output 1920x1080: ["HDMI-A-1", "DP-3"]
+2026-01-04T11:54:06.021222Z  INFO Assigned remaining output 2560x1440 to monitor HDMI-A-1 at (4480, 0)
+2026-01-04T11:54:06.021224Z  INFO Assigned remaining output 1920x1080 to monitor DP-3 at (0, 0)
+2026-01-04T11:54:06.021225Z  INFO Creating barriers with 3 outputs:
+2026-01-04T11:54:06.021227Z  INFO   Output at (0, 0) size 3072x1728
+2026-01-04T11:54:06.021228Z  INFO   Output at (4480, 0) size 2560x1440
+2026-01-04T11:54:06.021229Z  INFO   Output at (0, 0) size 1920x1080
+2026-01-04T11:54:06.021230Z  INFO Screen bounds: (0, 0) to (7040, 1728)
+2026-01-04T11:54:06.021232Z  INFO   Left edge -> output at Some((0, 0, 3072, 1728))
+2026-01-04T11:54:06.021239Z  INFO Creating Left barrier on output Some("at (0, 0)"), size 1x1728
+2026-01-04T11:54:06.021339Z  INFO Edge capture running with 1 barriers
+2026-01-04T11:54:06.021365Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:54:06.021747Z  INFO Poll #0: state=Local, peers=[]
+2026-01-04T11:54:06.075598Z DEBUG Found input device: Sony Interactive Entertainment DualSense Wireless Controller at /dev/input/event16 (k
+2026-01-04T11:54:06.119590Z DEBUG Found input device: HP, Inc HyperX QuadCast S Consumer Control at /dev/input/event14 (keys=true, rel=true
+2026-01-04T11:54:06.197562Z DEBUG Found input device: HP, Inc HyperX QuadCast S Consumer Control at /dev/input/event7 (keys=true, rel=false
+2026-01-04T11:54:06.210608Z DEBUG Found input device: Asus WMI hotkeys at /dev/input/event6 (keys=true, rel=false)
+2026-01-04T11:54:06.218559Z DEBUG Found input device: Power Button at /dev/input/event5 (keys=true, rel=false)
+2026-01-04T11:54:06.230560Z DEBUG Found input device: Power Button at /dev/input/event4 (keys=true, rel=false)
+2026-01-04T11:54:06.240575Z DEBUG Found input device: Sleep Button at /dev/input/event3 (keys=true, rel=false)
+2026-01-04T11:54:06.249560Z  INFO Found 13 input device paths
+2026-01-04T11:54:06.249572Z DEBUG   /dev/input/event12
+2026-01-04T11:54:06.249575Z DEBUG   /dev/input/event13
+2026-01-04T11:54:06.249578Z DEBUG   /dev/input/event1
+2026-01-04T11:54:06.249580Z DEBUG   /dev/input/event0
+2026-01-04T11:54:06.249582Z DEBUG   /dev/input/event18
+2026-01-04T11:54:06.249585Z DEBUG   /dev/input/event2
+2026-01-04T11:54:06.249586Z DEBUG   /dev/input/event16
+2026-01-04T11:54:06.249589Z DEBUG   /dev/input/event14
+2026-01-04T11:54:06.249591Z DEBUG   /dev/input/event7
+2026-01-04T11:54:06.249593Z DEBUG   /dev/input/event6
+2026-01-04T11:54:06.249595Z DEBUG   /dev/input/event5
+2026-01-04T11:54:06.249597Z DEBUG   /dev/input/event4
+2026-01-04T11:54:06.249599Z DEBUG   /dev/input/event3
+2026-01-04T11:54:09.023089Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:54:09.023100Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:54:09.023667Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:54:12.024315Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:54:12.024324Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:54:12.024969Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:54:15.025449Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:54:15.025459Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:54:15.025895Z  INFO Connected to 192.168.0.84:24850
+2026-01-04T11:54:15.026611Z  INFO Connected to cachyos (left)
+2026-01-04T11:54:18.628421Z DEBUG Received from Left: Enter(EnterPayload { from_direction: Left, cursor_pos: EdgeRelative(0.340277777777777
+2026-01-04T11:54:18.628434Z  INFO Received Enter from Left
+2026-01-04T11:54:18.628437Z  INFO Receiving control from Left, cursor at (0, 735)
+2026-01-04T11:54:18.628441Z  INFO Positioned cursor at (0, 735)
+2026-01-04T11:54:18.628445Z  INFO Starting input injection from Left
+2026-01-04T11:54:18.632822Z  INFO Input emulator created
+2026-01-04T11:54:18.632848Z  INFO Sending EnterAck(EnterAckPayload { success: true, transfer_id: 1, actual_cursor_pos: Some((0, 735)), erro
+2026-01-04T11:54:18.634550Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 0, timestamp_us: 1767527658635474, event: Ke
+2026-01-04T11:54:18.634560Z DEBUG RECV KeyDown: keycode=125 (LEFTMETA)
+2026-01-04T11:54:18.634563Z DEBUG INJECT KEY: LEFTMETA DOWN (keycode=125, modifiers: depressed=0x0, super=false)
+2026-01-04T11:54:18.634570Z DEBUG INJECT MODIFIERS: depressed=0x40 (super=true)
+2026-01-04T11:54:18.816986Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 1, timestamp_us: 1767527658817924, event: Ke
+2026-01-04T11:54:18.816996Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
+2026-01-04T11:54:18.816998Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:19.854118Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 2, timestamp_us: 1767527659853964, event: Ke
+2026-01-04T11:54:19.854128Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:19.854130Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:19.861556Z DEBUG IPC: connection accepted
+2026-01-04T11:54:19.861584Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:19.861589Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:19.861597Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 469444,
+2026-01-04T11:54:19.861734Z  INFO   edge_check: has monitor in direction Left
+2026-01-04T11:54:19.861738Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:19.861740Z  INFO IPC Move Left: doing local movefocus l
+2026-01-04T11:54:19.862188Z  INFO   movefocus succeeded
+2026-01-04T11:54:19.862204Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:20.054344Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 3, timestamp_us: 1767527660055230, event: Ke
+2026-01-04T11:54:20.054355Z DEBUG RECV KeyUp: keycode=105 (LEFT)
+2026-01-04T11:54:20.054357Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:21.108408Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 4, timestamp_us: 1767527661109285, event: Ke
+2026-01-04T11:54:21.108419Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:21.108421Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:21.115997Z DEBUG IPC: connection accepted
+2026-01-04T11:54:21.116022Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:21.116026Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:21.117086Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 469444,
+2026-01-04T11:54:21.117218Z  INFO   edge_check: has monitor in direction Left
+2026-01-04T11:54:21.117222Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:21.117224Z  INFO IPC Move Left: doing local movefocus l
+2026-01-04T11:54:21.117852Z  INFO   movefocus succeeded
+2026-01-04T11:54:21.117864Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:21.277987Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 5, timestamp_us: 1767527661278909, event: Ke
+2026-01-04T11:54:21.277997Z DEBUG RECV KeyUp: keycode=105 (LEFT)
+2026-01-04T11:54:21.277999Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:22.175215Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 6, timestamp_us: 1767527662176117, event: Ke
+2026-01-04T11:54:22.175225Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:22.175227Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:22.182621Z DEBUG IPC: connection accepted
+2026-01-04T11:54:22.182642Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:22.182646Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:22.182649Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 469444,
+2026-01-04T11:54:22.183046Z  INFO   edge_check: active window at (967,52) size 931x1006, 3 clients on monitor
+2026-01-04T11:54:22.183051Z  INFO   edge_check: has_window_in_direction=true -> at_edge=false
+2026-01-04T11:54:22.183074Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:22.183077Z  INFO IPC Move Left: doing local movefocus l
+2026-01-04T11:54:22.183482Z  INFO   movefocus succeeded
+2026-01-04T11:54:22.183500Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:22.360566Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 7, timestamp_us: 1767527662361486, event: Ke
+2026-01-04T11:54:22.360577Z DEBUG RECV KeyUp: keycode=105 (LEFT)
+2026-01-04T11:54:22.360579Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:24.951285Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 8, timestamp_us: 1767527664952186, event: Ke
+2026-01-04T11:54:24.951296Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:24.951298Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:24.958722Z DEBUG IPC: connection accepted
+2026-01-04T11:54:24.958766Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:24.958771Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:24.959830Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 1, entered_at: Instant { tv_sec: 469444,
+2026-01-04T11:54:24.960190Z  INFO   edge_check: active window at (22,52) size 931x439, 3 clients on monitor
+2026-01-04T11:54:24.960195Z  INFO   edge_check: has_window_in_direction=false -> at_edge=true
+2026-01-04T11:54:24.960211Z  INFO IPC Move Left: at_edge=true, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:24.960214Z  INFO Keyboard return: at edge, returning control to Left
+2026-01-04T11:54:24.960216Z  INFO Returning control to Left
+2026-01-04T11:54:24.960223Z  INFO Sending Leave(LeavePayload { to_direction: Left, cursor_pos: EdgeRelative(0.5), modifiers: ModifierState
+2026-01-04T11:54:24.960228Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:24.960251Z  INFO Stopping input injection
+2026-01-04T11:54:24.960255Z DEBUG RESET: Releasing key 105 (LEFT)
+2026-01-04T11:54:24.960260Z DEBUG RESET: Releasing key 125 (LEFTMETA)
+2026-01-04T11:54:24.960264Z DEBUG All keys reset complete
+2026-01-04T11:54:24.975397Z DEBUG Received from Left: LeaveAck
+2026-01-04T11:54:24.975403Z  INFO Received LeaveAck
+2026-01-04T11:54:39.222090Z DEBUG Received from Left: Enter(EnterPayload { from_direction: Left, cursor_pos: EdgeRelative(0.340277777777777
+2026-01-04T11:54:39.222103Z  INFO Received Enter from Left
+2026-01-04T11:54:39.222105Z  INFO Receiving control from Left, cursor at (0, 735)
+2026-01-04T11:54:39.222107Z  INFO Positioned cursor at (0, 735)
+2026-01-04T11:54:39.222111Z  INFO Starting input injection from Left
+2026-01-04T11:54:39.222113Z  INFO Sending EnterAck(EnterAckPayload { success: true, transfer_id: 2, actual_cursor_pos: Some((0, 735)), erro
+2026-01-04T11:54:39.223700Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 9, timestamp_us: 1767527679224727, event: Ke
+2026-01-04T11:54:39.223705Z DEBUG RECV KeyDown: keycode=125 (LEFTMETA)
+2026-01-04T11:54:39.223707Z DEBUG INJECT KEY: LEFTMETA DOWN (keycode=125, modifiers: depressed=0x0, super=false)
+2026-01-04T11:54:39.223712Z DEBUG INJECT MODIFIERS: depressed=0x40 (super=true)
+2026-01-04T11:54:39.418488Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 10, timestamp_us: 1767527679419491, event: K
+2026-01-04T11:54:39.418499Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
+2026-01-04T11:54:39.418501Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:41.461649Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 11, timestamp_us: 1767527681462608, event: K
+2026-01-04T11:54:41.461659Z DEBUG RECV KeyDown: keycode=106 (RIGHT)
+2026-01-04T11:54:41.461661Z DEBUG INJECT KEY: RIGHT DOWN (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:41.468991Z DEBUG IPC: connection accepted
+2026-01-04T11:54:41.469013Z DEBUG IPC: received Move { direction: Right }
+2026-01-04T11:54:41.469017Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:41.469021Z  INFO IPC Move Right: state=ReceivedControl { from: Left, transfer_id: 2, entered_at: Instant { tv_sec: 469464,
+2026-01-04T11:54:41.469165Z  INFO   edge_check: has monitor in direction Right
+2026-01-04T11:54:41.469169Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
+2026-01-04T11:54:41.469171Z  INFO IPC Move Right: doing local movefocus r
+2026-01-04T11:54:41.469584Z  INFO   movefocus succeeded
+2026-01-04T11:54:41.469596Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:41.658384Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 12, timestamp_us: 1767527681659448, event: K
+2026-01-04T11:54:41.658395Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
+2026-01-04T11:54:41.658398Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:42.972616Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 13, timestamp_us: 1767527682973657, event: K
+2026-01-04T11:54:42.972627Z DEBUG RECV KeyDown: keycode=106 (RIGHT)
+2026-01-04T11:54:42.972629Z DEBUG INJECT KEY: RIGHT DOWN (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:42.979947Z DEBUG IPC: connection accepted
+2026-01-04T11:54:42.979971Z DEBUG IPC: received Move { direction: Right }
+2026-01-04T11:54:42.979976Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:42.979980Z  INFO IPC Move Right: state=ReceivedControl { from: Left, transfer_id: 2, entered_at: Instant { tv_sec: 469464,
+2026-01-04T11:54:42.980154Z  INFO   edge_check: has monitor in direction Right
+2026-01-04T11:54:42.980158Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
+2026-01-04T11:54:42.980159Z  INFO IPC Move Right: doing local movefocus r
+2026-01-04T11:54:42.980794Z  INFO   movefocus succeeded
+2026-01-04T11:54:42.980804Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:43.189868Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 14, timestamp_us: 1767527683190869, event: K
+2026-01-04T11:54:43.189880Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
+2026-01-04T11:54:43.189883Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:45.193254Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 15, timestamp_us: 1767527685194247, event: K
+2026-01-04T11:54:45.193265Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:45.193266Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:45.200701Z DEBUG IPC: connection accepted
+2026-01-04T11:54:45.200723Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:45.200727Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:45.201788Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 2, entered_at: Instant { tv_sec: 469464,
+2026-01-04T11:54:45.201914Z  INFO   edge_check: has monitor in direction Left
+2026-01-04T11:54:45.201917Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:45.201920Z  INFO IPC Move Left: doing local movefocus l
+2026-01-04T11:54:45.202548Z  INFO   movefocus succeeded
+2026-01-04T11:54:45.202566Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:45.382879Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 16, timestamp_us: 1767527685382826, event: K
+2026-01-04T11:54:45.382890Z DEBUG RECV KeyUp: keycode=105 (LEFT)
+2026-01-04T11:54:45.382893Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:46.024027Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 17, timestamp_us: 1767527686025045, event: K
+2026-01-04T11:54:46.024037Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:46.024040Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:46.031433Z DEBUG IPC: connection accepted
+2026-01-04T11:54:46.031455Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:46.031459Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:46.031462Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 2, entered_at: Instant { tv_sec: 469464,
+2026-01-04T11:54:46.031841Z  INFO   edge_check: active window at (967,52) size 931x1006, 3 clients on monitor
+2026-01-04T11:54:46.031845Z  INFO   edge_check: has_window_in_direction=true -> at_edge=false
+2026-01-04T11:54:46.031861Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:46.031863Z  INFO IPC Move Left: doing local movefocus l
+2026-01-04T11:54:46.032267Z  INFO   movefocus succeeded
+2026-01-04T11:54:46.032281Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:46.218217Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 18, timestamp_us: 1767527686219226, event: K
+2026-01-04T11:54:46.218228Z DEBUG RECV KeyUp: keycode=105 (LEFT)
+2026-01-04T11:54:46.218229Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:47.389179Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 19, timestamp_us: 1767527687389175, event: K
+2026-01-04T11:54:47.389190Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:54:47.389192Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:54:47.396966Z DEBUG IPC: connection accepted
+2026-01-04T11:54:47.396990Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:54:47.396996Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:54:47.398056Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 2, entered_at: Instant { tv_sec: 469464,
+2026-01-04T11:54:47.398466Z  INFO   edge_check: active window at (22,52) size 931x439, 3 clients on monitor
+2026-01-04T11:54:47.398471Z  INFO   edge_check: has_window_in_direction=false -> at_edge=true
+2026-01-04T11:54:47.398487Z  INFO IPC Move Left: at_edge=true, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:54:47.398489Z  INFO Keyboard return: at edge, returning control to Left
+2026-01-04T11:54:47.398491Z  INFO Returning control to Left
+2026-01-04T11:54:47.398497Z  INFO Sending Leave(LeavePayload { to_direction: Left, cursor_pos: EdgeRelative(0.5), modifiers: ModifierState
+2026-01-04T11:54:47.398503Z DEBUG IPC: got response, sending to client
+2026-01-04T11:54:47.398523Z  INFO Stopping input injection
+2026-01-04T11:54:47.398527Z DEBUG RESET: Releasing key 105 (LEFT)
+2026-01-04T11:54:47.398532Z DEBUG RESET: Releasing key 125 (LEFTMETA)
+2026-01-04T11:54:47.398544Z DEBUG All keys reset complete
+2026-01-04T11:54:47.400069Z DEBUG Received from Left: LeaveAck
+2026-01-04T11:54:47.400072Z  INFO Received LeaveAck
+2026-01-04T11:55:15.861901Z DEBUG Received from Left: Enter(EnterPayload { from_direction: Left, cursor_pos: EdgeRelative(0.340277777777777
+2026-01-04T11:55:15.861913Z  INFO Received Enter from Left
+2026-01-04T11:55:15.861915Z  INFO Receiving control from Left, cursor at (0, 735)
+2026-01-04T11:55:15.861917Z  INFO Positioned cursor at (0, 735)
+2026-01-04T11:55:15.861920Z  INFO Starting input injection from Left
+2026-01-04T11:55:15.861923Z  INFO Sending EnterAck(EnterAckPayload { success: true, transfer_id: 3, actual_cursor_pos: Some((0, 735)), erro
+2026-01-04T11:55:15.865819Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 20, timestamp_us: 1767527715867034, event: K
+2026-01-04T11:55:15.865826Z DEBUG RECV KeyDown: keycode=125 (LEFTMETA)
+2026-01-04T11:55:15.865828Z DEBUG INJECT KEY: LEFTMETA DOWN (keycode=125, modifiers: depressed=0x0, super=false)
+2026-01-04T11:55:15.865832Z DEBUG INJECT MODIFIERS: depressed=0x40 (super=true)
+2026-01-04T11:55:16.032614Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 21, timestamp_us: 1767527716033822, event: K
+2026-01-04T11:55:16.032624Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
+2026-01-04T11:55:16.032628Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:55:17.651996Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 22, timestamp_us: 1767527717652155, event: K
+2026-01-04T11:55:17.652007Z DEBUG RECV KeyDown: keycode=106 (RIGHT)
+2026-01-04T11:55:17.652009Z DEBUG INJECT KEY: RIGHT DOWN (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:55:17.659514Z DEBUG IPC: connection accepted
+2026-01-04T11:55:17.659540Z DEBUG IPC: received Move { direction: Right }
+2026-01-04T11:55:17.659544Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:55:17.659547Z  INFO IPC Move Right: state=ReceivedControl { from: Left, transfer_id: 3, entered_at: Instant { tv_sec: 469501,
+2026-01-04T11:55:17.659725Z  INFO   edge_check: has monitor in direction Right
+2026-01-04T11:55:17.659729Z  INFO IPC Move Right: at_edge=false, has_peer=false, neighbor=None
+2026-01-04T11:55:17.659731Z  INFO IPC Move Right: doing local movefocus r
+2026-01-04T11:55:17.660151Z  INFO   movefocus succeeded
+2026-01-04T11:55:17.660167Z DEBUG IPC: got response, sending to client
+2026-01-04T11:55:17.838115Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 23, timestamp_us: 1767527717838265, event: K
+2026-01-04T11:55:17.838125Z DEBUG RECV KeyUp: keycode=106 (RIGHT)
+2026-01-04T11:55:17.838127Z DEBUG INJECT KEY: RIGHT UP (keycode=106, modifiers: depressed=0x40, super=true)
+2026-01-04T11:55:18.350254Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 24, timestamp_us: 1767527718351457, event: K
+2026-01-04T11:55:18.350264Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:55:18.350267Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:55:18.358019Z DEBUG IPC: connection accepted
+2026-01-04T11:55:18.358042Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:55:18.358046Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:55:18.358056Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 3, entered_at: Instant { tv_sec: 469501,
+2026-01-04T11:55:18.358457Z  INFO   edge_check: active window at (967,52) size 931x1006, 3 clients on monitor
+2026-01-04T11:55:18.358462Z  INFO   edge_check: has_window_in_direction=true -> at_edge=false
+2026-01-04T11:55:18.358478Z  INFO IPC Move Left: at_edge=false, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:55:18.358480Z  INFO IPC Move Left: doing local movefocus l
+2026-01-04T11:55:18.358887Z  INFO   movefocus succeeded
+2026-01-04T11:55:18.358901Z DEBUG IPC: got response, sending to client
+2026-01-04T11:55:18.497240Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 25, timestamp_us: 1767527718497368, event: K
+2026-01-04T11:55:18.497250Z DEBUG RECV KeyUp: keycode=105 (LEFT)
+2026-01-04T11:55:18.497252Z DEBUG INJECT KEY: LEFT UP (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:55:19.962967Z DEBUG Received from Left: InputEvent(InputEventPayload { sequence: 26, timestamp_us: 1767527719963103, event: K
+2026-01-04T11:55:19.962977Z DEBUG RECV KeyDown: keycode=105 (LEFT)
+2026-01-04T11:55:19.962980Z DEBUG INJECT KEY: LEFT DOWN (keycode=105, modifiers: depressed=0x40, super=true)
+2026-01-04T11:55:19.970234Z DEBUG IPC: connection accepted
+2026-01-04T11:55:19.970259Z DEBUG IPC: received Move { direction: Left }
+2026-01-04T11:55:19.970265Z DEBUG IPC: sent to main loop, awaiting response
+2026-01-04T11:55:19.970271Z  INFO IPC Move Left: state=ReceivedControl { from: Left, transfer_id: 3, entered_at: Instant { tv_sec: 469501,
+2026-01-04T11:55:19.970667Z  INFO   edge_check: active window at (22,52) size 931x439, 3 clients on monitor
+2026-01-04T11:55:19.970672Z  INFO   edge_check: has_window_in_direction=false -> at_edge=true
+2026-01-04T11:55:19.970690Z  INFO IPC Move Left: at_edge=true, has_peer=true, neighbor=Some("cachyos")
+2026-01-04T11:55:19.970693Z  INFO Keyboard return: at edge, returning control to Left
+2026-01-04T11:55:19.970695Z  INFO Returning control to Left
+2026-01-04T11:55:19.970702Z  INFO Sending Leave(LeavePayload { to_direction: Left, cursor_pos: EdgeRelative(0.5), modifiers: ModifierState
+2026-01-04T11:55:19.970706Z DEBUG IPC: got response, sending to client
+2026-01-04T11:55:19.970732Z  INFO Stopping input injection
+2026-01-04T11:55:19.970735Z DEBUG RESET: Releasing key 105 (LEFT)
+2026-01-04T11:55:19.970741Z DEBUG RESET: Releasing key 125 (LEFTMETA)
+2026-01-04T11:55:19.970746Z DEBUG All keys reset complete
+2026-01-04T11:55:19.971257Z DEBUG Received from Left: LeaveAck
+2026-01-04T11:55:19.971260Z  INFO Received LeaveAck
+2026-01-04T11:55:38.160099Z  INFO Peer Left disconnected
+2026-01-04T11:55:43.048919Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:55:43.048928Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:55:43.049615Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:55:45.360438Z  INFO Poll #50000: state=Local, peers=[]
+2026-01-04T11:55:46.050825Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:55:46.050834Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:55:46.051288Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:55:49.053234Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:55:49.053243Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:55:49.053671Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:55:52.054856Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:55:52.054868Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:55:52.055360Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:55:55.056192Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:55:55.056202Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:55:55.056854Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:55:58.058007Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:55:58.058016Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:55:58.058439Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:56:01.060241Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:56:01.060257Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:56:01.060676Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+2026-01-04T11:56:04.061825Z DEBUG Connecting to left at 192.168.0.84:24850...
+2026-01-04T11:56:04.061834Z  INFO Connecting to 192.168.0.84:24850
+2026-01-04T11:56:04.062343Z DEBUG Failed to connect to left (192.168.0.84:24850): IO error: Connection refused (os error 111)
+^C2026-01-04T11:56:05.707382Z  INFO Shutting down...
 
