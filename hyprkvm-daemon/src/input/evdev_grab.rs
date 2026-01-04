@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use std::thread;
 
 use evdev::{Device, InputEventKind};
+use rustix::fs::{fcntl_setfl, OFlags};
 
 use super::grabber::GrabEvent;
 
@@ -156,6 +158,13 @@ fn run_evdev_grabber(
                     match Device::open(path) {
                         Ok(mut dev) => {
                             let name = dev.name().unwrap_or("unknown").to_string();
+
+                            // Set non-blocking mode
+                            // SAFETY: dev owns the fd and will outlive this borrow
+                            let fd = unsafe { BorrowedFd::borrow_raw(dev.as_raw_fd()) };
+                            if let Err(e) = fcntl_setfl(fd, OFlags::NONBLOCK) {
+                                tracing::warn!("Failed to set non-blocking on {}: {}", name, e);
+                            }
 
                             // Try to grab immediately after opening
                             match dev.grab() {
