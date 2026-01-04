@@ -375,18 +375,33 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         loop {
             match server.accept().await {
                 Ok(mut conn) => {
+                    tracing::debug!("IPC: connection accepted");
                     let ipc_tx = ipc_tx.clone();
                     tokio::spawn(async move {
                         match conn.recv().await {
                             Ok(Some(request)) => {
+                                tracing::debug!("IPC: received {:?}", request);
                                 let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                                 if ipc_tx.send((request, resp_tx)).await.is_ok() {
-                                    if let Ok(response) = resp_rx.await {
-                                        let _ = conn.send(&response).await;
+                                    tracing::debug!("IPC: sent to main loop, awaiting response");
+                                    match resp_rx.await {
+                                        Ok(response) => {
+                                            tracing::debug!("IPC: got response, sending to client");
+                                            if let Err(e) = conn.send(&response).await {
+                                                tracing::error!("IPC: failed to send response: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("IPC: response channel error: {}", e);
+                                        }
                                     }
+                                } else {
+                                    tracing::error!("IPC: failed to send request to main loop");
                                 }
                             }
-                            Ok(None) => {}
+                            Ok(None) => {
+                                tracing::debug!("IPC: connection closed by client");
+                            }
                             Err(e) => {
                                 tracing::debug!("IPC recv error: {}", e);
                             }
@@ -1092,10 +1107,12 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
     use hyprkvm_common::protocol::{IpcRequest, IpcResponse};
 
     let dir: Direction = direction.parse()?;
+    tracing::debug!("CLI: handle_move {:?}", dir);
 
     // Try to connect to daemon
     match ipc::IpcClient::connect().await {
         Ok(mut client) => {
+            tracing::debug!("CLI: connected to daemon");
             // Ask daemon to handle the move (it does movefocus internally)
             let request = IpcRequest::Move { direction: dir };
             match client.request(&request).await {
@@ -1104,7 +1121,7 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
                 }
                 Ok(IpcResponse::DoLocalMove) => {
                     // Daemon already did movefocus, nothing more to do
-                    tracing::debug!("Local move handled by daemon");
+                    tracing::debug!("CLI: local move handled by daemon");
                 }
                 Ok(IpcResponse::Error { message }) => {
                     tracing::warn!("Daemon error: {}", message);
@@ -1113,8 +1130,7 @@ async fn handle_move(direction: &str) -> anyhow::Result<()> {
                     tracing::warn!("Unexpected response from daemon");
                 }
                 Err(e) => {
-                    tracing::debug!("IPC request failed: {}", e);
-                    // Fall through to local move
+                    tracing::warn!("CLI: IPC request failed: {}, falling back to local", e);
                     do_local_move(dir).await?;
                 }
             }
