@@ -28,6 +28,7 @@ const CHUNK_TIMEOUT_SECS: u64 = 30;
 
 /// Clipboard synchronization error
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum ClipboardError {
     #[error("Clipboard access denied")]
     AccessDenied,
