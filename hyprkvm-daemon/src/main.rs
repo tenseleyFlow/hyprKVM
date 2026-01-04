@@ -567,6 +567,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
                 }
 
+                // Check for transfer timeout (stuck in Initiating state)
+                if let transfer::TransferState::Initiating { started_at, .. } = transfer_manager.state().await {
+                    const TRANSFER_TIMEOUT_MS: u128 = 3000;
+                    if started_at.elapsed().as_millis() > TRANSFER_TIMEOUT_MS {
+                        tracing::warn!("Transfer timed out after {}ms, aborting", TRANSFER_TIMEOUT_MS);
+                        transfer_manager.abort().await;
+                    }
+                }
+
                 // Poll for incoming messages from peers (non-blocking)
                 let directions: Vec<Direction> = {
                     let peers = peers.read().await;
@@ -688,12 +697,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     transfer::TransferEvent::SendMessage { direction, message } => {
                         let mut peers = peers.write().await;
                         if let Some(peer) = peers.get_mut(&direction) {
-                            tracing::debug!("Sending {:?} to {:?}", message, direction);
+                            info!("Sending {:?} to {:?}", message, direction);
                             if let Err(e) = peer.send(&message).await {
-                                tracing::error!("Failed to send message: {}", e);
+                                tracing::error!("Failed to send message to {:?}: {}", direction, e);
+                                // If send fails, abort the transfer
+                                transfer_manager.abort().await;
                             }
                         } else {
-                            tracing::warn!("No peer for direction {:?}", direction);
+                            tracing::warn!("No peer for direction {:?}, aborting transfer", direction);
+                            transfer_manager.abort().await;
                         }
                     }
                     transfer::TransferEvent::StartCapture { direction: cap_dir } => {
