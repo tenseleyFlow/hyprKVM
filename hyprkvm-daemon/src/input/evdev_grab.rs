@@ -550,19 +550,48 @@ fn run_evdev_grabber(
     }
 }
 
+// Mouse button codes (from linux/input-event-codes.h)
+const BTN_MOUSE: u16 = 0x110;
+const BTN_LEFT: u16 = 0x110;
+const BTN_RIGHT: u16 = 0x111;
+const BTN_MIDDLE: u16 = 0x112;
+const BTN_SIDE: u16 = 0x113;
+const BTN_EXTRA: u16 = 0x114;
+const BTN_FORWARD: u16 = 0x115;
+const BTN_BACK: u16 = 0x116;
+const BTN_TASK: u16 = 0x117;
+
+fn is_mouse_button(code: u16) -> bool {
+    code >= BTN_MOUSE && code <= BTN_TASK
+}
+
 fn convert_event(ev: &evdev::InputEvent) -> Option<GrabEvent> {
     match ev.kind() {
         InputEventKind::Key(key) => {
-            let keycode = key.code() as u32;
+            let keycode = key.code();
             let pressed = ev.value() == 1;
             let released = ev.value() == 0;
 
-            if pressed {
-                Some(GrabEvent::KeyDown { keycode })
-            } else if released {
-                Some(GrabEvent::KeyUp { keycode })
+            // Check if this is a mouse button
+            if is_mouse_button(keycode) {
+                if pressed || released {
+                    tracing::debug!("MOUSE BUTTON: code={:#x} pressed={}", keycode, pressed);
+                    Some(GrabEvent::PointerButton {
+                        button: keycode as u32,
+                        pressed,
+                    })
+                } else {
+                    None // Repeat events, ignore
+                }
             } else {
-                None // Repeat events, ignore
+                // Regular keyboard key
+                if pressed {
+                    Some(GrabEvent::KeyDown { keycode: keycode as u32 })
+                } else if released {
+                    Some(GrabEvent::KeyUp { keycode: keycode as u32 })
+                } else {
+                    None // Repeat events, ignore
+                }
             }
         }
         InputEventKind::RelAxis(axis) => {
