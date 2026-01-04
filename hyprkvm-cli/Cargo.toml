@@ -1,0 +1,20 @@
+[package]
+name = "hyprkvm-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "HyprKVM CLI tool"
+
+[[bin]]
+name = "hyprkvm-ctl"
+path = "src/main.rs"
+
+[dependencies]
+hyprkvm-common = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,52 @@
+[package]
+name = "hyprkvm-daemon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "HyprKVM daemon - Hyprland-native software KVM switch"
+
+[[bin]]
+name = "hyprkvm"
+path = "src/main.rs"
+
+[dependencies]
+hyprkvm-common = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# CLI
+clap = { workspace = true }
+
+# Wayland (for input injection/capture)
+wayland-client = { workspace = true }
+wayland-protocols = { workspace = true }
+wayland-protocols-wlr = { workspace = true }
+wayland-protocols-misc = { workspace = true }
+smithay-client-toolkit = { workspace = true }
+
+# TLS
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rcgen = { workspace = true }
+
+# Utilities
+dirs = { workspace = true }
+bytes = { workspace = true }
+hostname = { workspace = true }
+rustix = { workspace = true }

@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "hyprkvm-daemon",
+    "hyprkvm-cli",
+    "hyprkvm-common",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["tenseleyFlow"]
+license = "MIT"
+repository = "https://github.com/tenseleyFlow/hyprKVM"
+description = "Hyprland-native software KVM switch"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Wayland
+wayland-client = "0.31"
+wayland-protocols = { version = "0.31", features = ["client", "unstable"] }
+wayland-protocols-wlr = "0.3"
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+smithay-client-toolkit = "0.19"
+
+# TLS
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"
+
+# Utilities
+dirs = "5"
+bytes = "1"
+hostname = "0.4"
+rustix = { version = "0.38", features = ["fs"] }
+
+# Internal crates
+hyprkvm-common = { path = "hyprkvm-common" }
