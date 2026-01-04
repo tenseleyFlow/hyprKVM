@@ -11,12 +11,13 @@ self_name = "my-machine"
 # Neighbor machines
 # Configure machines adjacent to this one
 
-[[machines.neighbors]]
-name = "desktop"
-direction = "right"  # This machine is to our right
-address = "desktop.local:24850"
-# Optional: pre-trust fingerprint (skip verification prompt)
-# fingerprint = "SHA256:..."
+# Example neighbor - uncomment and modify for your setup
+# [[machines.neighbors]]
+# name = "desktop"
+# direction = "right"  # This machine is to our right
+# address = "192.168.1.100:24850"
+# # Optional: pre-trust fingerprint (skip verification prompt)
+# # fingerprint = "SHA256:..."
 
 # [[machines.neighbors]]
 # name = "laptop"

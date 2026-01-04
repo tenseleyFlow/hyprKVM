@@ -110,6 +110,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use hyprkvm_common::Direction;
+    use hyprkvm_common::protocol::{Message, HelloPayload, PROTOCOL_VERSION};
+
     // Load or create default config
     let config = match Config::load(config_path) {
         Ok(cfg) => cfg,
@@ -133,48 +140,314 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         info!("  {} at ({}, {}) {}x{}", mon.name, mon.x, mon.y, mon.width, mon.height);
     }
 
+    // Calculate screen bounds
+    let screen_width: u32 = monitors.iter().map(|m| m.x as u32 + m.width).max().unwrap_or(1920);
+    let screen_height: u32 = monitors.iter().map(|m| m.y as u32 + m.height).max().unwrap_or(1080);
+
     // Determine which edges have network neighbors
     let mut enabled_edges = Vec::new();
+    let mut neighbor_map: HashMap<Direction, SocketAddr> = HashMap::new();
     for neighbor in &config.machines.neighbors {
         enabled_edges.push(neighbor.direction);
-        info!("  Network neighbor: {} ({})", neighbor.name, neighbor.direction);
+        neighbor_map.insert(neighbor.direction, neighbor.address);
+        info!("  Network neighbor: {} ({}) at {}", neighbor.name, neighbor.direction, neighbor.address);
     }
 
-    // If no neighbors configured, enable all edges for testing
+    // If no neighbors configured, just run in demo mode
     if enabled_edges.is_empty() {
-        info!("No neighbors configured, enabling all edges for testing");
-        enabled_edges = vec![
-            hyprkvm_common::Direction::Left,
-            hyprkvm_common::Direction::Right,
-        ];
+        info!("No neighbors configured. Add neighbors in config to enable control transfer.");
+        enabled_edges = vec![Direction::Left, Direction::Right];
     }
 
     // Start edge capture
     info!("Starting edge capture for: {:?}", enabled_edges);
     let edge_capture = input::EdgeCapture::new(input::EdgeCaptureConfig {
         barrier_size: 1,
-        enabled_edges,
+        enabled_edges: enabled_edges.clone(),
     })?;
+
+    // Create transfer manager
+    let (transfer_manager, mut transfer_events) = transfer::TransferManager::new(
+        config.machines.self_name.clone(),
+    );
+    let transfer_manager = Arc::new(transfer_manager);
+
+    // Connection storage: direction -> peer connection
+    let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Start network server
+    let listen_addr: SocketAddr = format!("0.0.0.0:{}", config.network.listen_port).parse()?;
+    let server = network::Server::bind(listen_addr).await?;
+    info!("Listening for connections on {}", server.local_addr());
+
+    // Spawn task to accept incoming connections
+    let peers_clone = peers.clone();
+    let machine_name = config.machines.self_name.clone();
+    let accept_handle = tokio::spawn(async move {
+        loop {
+            match server.accept().await {
+                Ok(mut conn) => {
+                    let addr = conn.remote_addr();
+                    info!("Incoming connection from {}", addr);
+
+                    // Receive Hello
+                    match conn.recv().await {
+                        Ok(Some(Message::Hello(hello))) => {
+                            info!("Peer {} connected (protocol v{})", hello.machine_name, hello.protocol_version);
+
+                            // Send HelloAck
+                            let ack = Message::HelloAck(hyprkvm_common::protocol::HelloAckPayload {
+                                accepted: true,
+                                protocol_version: PROTOCOL_VERSION,
+                                machine_name: machine_name.clone(),
+                                error: None,
+                            });
+                            if let Err(e) = conn.send(&ack).await {
+                                tracing::error!("Failed to send HelloAck: {}", e);
+                                continue;
+                            }
+
+                            // TODO: Determine direction from peer info
+                            // For now, assume first connection is from configured neighbor
+                            // In production, match by machine name
+                        }
+                        Ok(Some(other)) => {
+                            tracing::warn!("Expected Hello, got {:?}", other);
+                        }
+                        Ok(None) => {
+                            tracing::debug!("Connection closed during handshake");
+                        }
+                        Err(e) => {
+                            tracing::error!("Handshake error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Accept error: {}", e);
+                }
+            }
+        }
+    });
+
+    // Channel for incoming messages from peers
+    let (peer_msg_tx, mut peer_msg_rx) = tokio::sync::mpsc::channel::<(Direction, Message)>(64);
+
+    // Connect to configured peers
+    for neighbor in &config.machines.neighbors {
+        let addr = neighbor.address;
+        let direction = neighbor.direction;
+        let peers_clone = peers.clone();
+        let machine_name = config.machines.self_name.clone();
+        let msg_tx = peer_msg_tx.clone();
+
+        tokio::spawn(async move {
+            info!("Connecting to {} at {}...", direction, addr);
+            match network::connect(addr).await {
+                Ok(mut conn) => {
+                    // Send Hello
+                    let hello = Message::Hello(HelloPayload {
+                        protocol_version: PROTOCOL_VERSION,
+                        machine_name: machine_name.clone(),
+                        capabilities: vec![],
+                    });
+
+                    if let Err(e) = conn.send(&hello).await {
+                        tracing::error!("Failed to send Hello to {}: {}", direction, e);
+                        return;
+                    }
+
+                    // Wait for HelloAck
+                    match conn.recv().await {
+                        Ok(Some(Message::HelloAck(ack))) => {
+                            if ack.accepted {
+                                info!("Connected to {} ({})", ack.machine_name, direction);
+
+                                // Split connection: store for sending, spawn receiver
+                                // For now, just store and we'll poll in the main loop
+                                let mut peers = peers_clone.write().await;
+                                peers.insert(direction, conn);
+                            } else {
+                                tracing::error!("Connection rejected: {:?}", ack.error);
+                            }
+                        }
+                        Ok(Some(other)) => {
+                            tracing::warn!("Expected HelloAck, got {:?}", other);
+                        }
+                        Ok(None) => {
+                            tracing::warn!("Connection closed during handshake");
+                        }
+                        Err(e) => {
+                            tracing::error!("Handshake error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to connect to {} ({}): {}", direction, addr, e);
+                }
+            }
+        });
+    }
 
     // Listen for Hyprland events
     let mut event_stream = hyprland::events::HyprlandEventStream::connect().await?;
 
-    info!("Daemon running. Move mouse to screen edges to test. Press Ctrl+C to stop.");
+    info!("Daemon running. Move mouse to screen edges to trigger transfer. Press Ctrl+C to stop.");
 
     loop {
         tokio::select! {
-            // Check for edge events (non-blocking via channel)
+            // Check for edge events and poll peer messages
             _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                // Handle edge events
                 while let Some(edge_event) = edge_capture.try_recv() {
-                    info!(
-                        "EDGE EVENT: {:?} at ({}, {})",
-                        edge_event.direction,
-                        edge_event.position.0,
-                        edge_event.position.1
-                    );
+                    let direction = edge_event.direction;
 
-                    // TODO: Sprint 4 - Trigger network switch
-                    // For now, just log it
+                    // Check if we have a peer in this direction
+                    let has_peer = {
+                        let peers = peers.read().await;
+                        peers.contains_key(&direction)
+                    };
+
+                    if has_peer {
+                        info!(
+                            "EDGE: {:?} at ({}, {}) - initiating transfer",
+                            direction,
+                            edge_event.position.0,
+                            edge_event.position.1
+                        );
+
+                        if let Err(e) = transfer_manager.initiate_transfer(
+                            direction,
+                            edge_event.position,
+                            screen_height,
+                            screen_width,
+                        ).await {
+                            tracing::warn!("Failed to initiate transfer: {}", e);
+                        }
+                    } else {
+                        tracing::debug!(
+                            "EDGE: {:?} but no peer connected",
+                            direction
+                        );
+                    }
+                }
+
+                // Poll for incoming messages from peers (non-blocking)
+                let directions: Vec<Direction> = {
+                    let peers = peers.read().await;
+                    peers.keys().cloned().collect()
+                };
+
+                for direction in directions {
+                    let mut peers = peers.write().await;
+                    if let Some(peer) = peers.get_mut(&direction) {
+                        // Try non-blocking receive using tokio timeout
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(1),
+                            peer.recv()
+                        ).await {
+                            Ok(Ok(Some(msg))) => {
+                                tracing::debug!("Received from {:?}: {:?}", direction, msg);
+                                // Handle incoming message
+                                match msg {
+                                    Message::Enter(payload) => {
+                                        info!("Received Enter from {:?}", direction);
+                                        match transfer_manager.handle_enter(
+                                            direction,
+                                            payload,
+                                            screen_width,
+                                            screen_height,
+                                        ).await {
+                                            Ok(pos) => {
+                                                info!("Positioned cursor at {:?}", pos);
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to handle Enter: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Message::EnterAck(ack) => {
+                                        info!("Received EnterAck: success={}", ack.success);
+                                        if let Err(e) = transfer_manager.handle_enter_ack(ack).await {
+                                            tracing::error!("Failed to handle EnterAck: {}", e);
+                                        }
+                                    }
+                                    Message::Leave(payload) => {
+                                        info!("Received Leave from {:?}", direction);
+                                        if let Err(e) = transfer_manager.handle_leave(payload).await {
+                                            tracing::error!("Failed to handle Leave: {}", e);
+                                        }
+                                    }
+                                    Message::LeaveAck => {
+                                        info!("Received LeaveAck");
+                                        // Transfer complete
+                                    }
+                                    Message::InputEvent(input) => {
+                                        tracing::trace!("Received input event: {:?}", input);
+                                        // TODO: Inject input via emulation module
+                                    }
+                                    Message::Ping { timestamp } => {
+                                        let _ = peer.send(&Message::Pong { timestamp }).await;
+                                    }
+                                    Message::Pong { timestamp } => {
+                                        tracing::trace!("Pong received, rtt={}ms",
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap()
+                                                .as_millis() as u64 - timestamp
+                                        );
+                                    }
+                                    _ => {
+                                        tracing::debug!("Unhandled message: {:?}", msg);
+                                    }
+                                }
+                            }
+                            Ok(Ok(None)) => {
+                                // Connection closed
+                                info!("Peer {:?} disconnected", direction);
+                                peers.remove(&direction);
+                            }
+                            Ok(Err(e)) => {
+                                tracing::error!("Error receiving from {:?}: {}", direction, e);
+                                peers.remove(&direction);
+                            }
+                            Err(_) => {
+                                // Timeout - no message available, that's fine
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle transfer events
+            Some(event) = transfer_events.recv() => {
+                match event {
+                    transfer::TransferEvent::SendMessage { direction, message } => {
+                        let mut peers = peers.write().await;
+                        if let Some(peer) = peers.get_mut(&direction) {
+                            tracing::debug!("Sending {:?} to {:?}", message, direction);
+                            if let Err(e) = peer.send(&message).await {
+                                tracing::error!("Failed to send message: {}", e);
+                            }
+                        } else {
+                            tracing::warn!("No peer for direction {:?}", direction);
+                        }
+                    }
+                    transfer::TransferEvent::StartCapture { direction } => {
+                        info!("Starting input capture for {:?}", direction);
+                        // TODO: Implement actual input capture
+                        // For now, just log
+                    }
+                    transfer::TransferEvent::StopCapture => {
+                        info!("Stopping input capture");
+                    }
+                    transfer::TransferEvent::StartInjection { from } => {
+                        info!("Starting input injection from {:?}", from);
+                        // TODO: Implement actual input injection
+                    }
+                    transfer::TransferEvent::StopInjection => {
+                        info!("Stopping input injection");
+                    }
                 }
             }
 
@@ -182,7 +455,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
             event = event_stream.next_event() => {
                 match event {
                     Ok(evt) => {
-                        tracing::debug!("Hyprland event: {:?}", evt);
+                        tracing::trace!("Hyprland event: {:?}", evt);
                     }
                     Err(e) => {
                         tracing::error!("Event error: {e}");
@@ -194,6 +467,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
             // Shutdown
             _ = tokio::signal::ctrl_c() => {
                 info!("Shutting down...");
+                accept_handle.abort();
                 break;
             }
         }

@@ -205,8 +205,8 @@ pub struct NeighborConfig {
     /// Direction relative to this machine
     pub direction: Direction,
 
-    /// Address (hostname:port or ip:port)
-    pub address: String,
+    /// Address (ip:port)
+    pub address: SocketAddr,
 
     /// Pre-trusted certificate fingerprint (optional)
     pub fingerprint: Option<String>,
