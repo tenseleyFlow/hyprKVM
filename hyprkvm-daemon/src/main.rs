@@ -934,7 +934,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     IpcRequest::Move { direction } => {
                         // Log current state for debugging
                         let current_state = transfer_manager.state().await;
-                        tracing::debug!("IPC Move {:?}: state={:?}", direction, current_state);
+                        info!("IPC Move {:?}: state={:?}", direction, current_state);
 
                         // For keyboard navigation, check if we're at the absolute edge:
                         // 1. On edge monitor (no monitor in that direction)
@@ -944,11 +944,17 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             // Get monitors and find focused one
                             let monitors = match hypr_client.monitors().await {
                                 Ok(m) => m,
-                                Err(_) => break 'edge_check false,
+                                Err(e) => {
+                                    info!("  edge_check: monitors query failed: {}", e);
+                                    break 'edge_check false;
+                                }
                             };
                             let focused_monitor = match monitors.iter().find(|m| m.focused) {
                                 Some(m) => m,
-                                None => break 'edge_check false,
+                                None => {
+                                    info!("  edge_check: no focused monitor found");
+                                    break 'edge_check false;
+                                }
                             };
 
                             // Check if there's another monitor in the requested direction
@@ -964,6 +970,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                             if has_monitor_in_direction {
                                 // There's a monitor in that direction, not at edge
+                                info!("  edge_check: has monitor in direction {:?}", direction);
                                 break 'edge_check false;
                             }
 
@@ -971,7 +978,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             // Get active window position
                             let active_window: serde_json::Value = match hypr_client.query("activewindow").await {
                                 Ok(w) => w,
-                                Err(_) => break 'edge_check false,
+                                Err(e) => {
+                                    info!("  edge_check: activewindow query failed: {}", e);
+                                    break 'edge_check false;
+                                }
                             };
 
                             let win_x = active_window.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
@@ -982,8 +992,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             // Get all clients (windows)
                             let clients: Vec<serde_json::Value> = match hypr_client.query("clients").await {
                                 Ok(c) => c,
-                                Err(_) => break 'edge_check false,
+                                Err(e) => {
+                                    info!("  edge_check: clients query failed: {}", e);
+                                    break 'edge_check false;
+                                }
                             };
+
+                            info!("  edge_check: active window at ({},{}) size {}x{}, {} clients on monitor",
+                                  win_x, win_y, win_w, win_h,
+                                  clients.iter().filter(|c| c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32 == focused_monitor.id).count());
 
                             // Check if any window is further in the requested direction on same monitor
                             let has_window_in_direction = clients.iter().any(|client| {
@@ -1003,6 +1020,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 }
                             });
 
+                            info!("  edge_check: has_window_in_direction={} -> at_edge={}", has_window_in_direction, !has_window_in_direction);
                             !has_window_in_direction
                         };
 
@@ -1018,7 +1036,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             .find(|n| n.direction == direction)
                             .map(|n| n.name.clone());
 
-                        tracing::debug!("IPC Move {:?}: at_edge={}, has_peer={}", direction, at_edge, has_peer);
+                        info!("IPC Move {:?}: at_edge={}, has_peer={}, neighbor={:?}", direction, at_edge, has_peer, neighbor_name);
 
                         // At edge with peer: either return control or initiate transfer
                         if at_edge && has_peer && neighbor_name.is_some() {
@@ -1076,10 +1094,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 Direction::Up => "u",
                                 Direction::Down => "d",
                             };
-                            tracing::debug!("IPC Move {:?}: doing local movefocus {}", direction, hypr_dir);
+                            info!("IPC Move {:?}: doing local movefocus {}", direction, hypr_dir);
                             match hypr_client.dispatch("movefocus", hypr_dir).await {
-                                Ok(()) => tracing::debug!("movefocus succeeded"),
-                                Err(e) => tracing::error!("movefocus failed: {}", e),
+                                Ok(()) => info!("  movefocus succeeded"),
+                                Err(e) => tracing::error!("  movefocus failed: {}", e),
                             }
                             IpcResponse::DoLocalMove
                         }
