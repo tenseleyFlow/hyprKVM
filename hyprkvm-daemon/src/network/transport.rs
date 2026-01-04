@@ -164,6 +164,8 @@ impl Server {
     /// Accept a new connection
     pub async fn accept(&self) -> Result<FramedConnection, TransportError> {
         let (stream, addr) = self.listener.accept().await.map_err(TransportError::Io)?;
+        // Disable Nagle's algorithm for low-latency input forwarding
+        stream.set_nodelay(true).map_err(TransportError::Io)?;
         tracing::info!("Accepted connection from {}", addr);
         FramedConnection::new(stream).map_err(TransportError::Io)
     }
@@ -173,6 +175,8 @@ impl Server {
 pub async fn connect(addr: SocketAddr) -> Result<FramedConnection, TransportError> {
     tracing::info!("Connecting to {}", addr);
     let stream = TcpStream::connect(addr).await.map_err(TransportError::Io)?;
+    // Disable Nagle's algorithm for low-latency input forwarding
+    stream.set_nodelay(true).map_err(TransportError::Io)?;
     tracing::info!("Connected to {}", addr);
     FramedConnection::new(stream).map_err(TransportError::Io)
 }
