@@ -177,6 +177,32 @@ impl EdgeCaptureState {
         }
     }
 
+    /// Find the output at the edge of the screen for a given direction
+    fn find_edge_output(&self, direction: Direction) -> Option<OutputInfo> {
+        if self.outputs.is_empty() {
+            return None;
+        }
+
+        match direction {
+            Direction::Left => {
+                // Find output with minimum x (leftmost)
+                self.outputs.iter().min_by_key(|o| o.x).cloned()
+            }
+            Direction::Right => {
+                // Find output with maximum x + width (rightmost)
+                self.outputs.iter().max_by_key(|o| o.x + o.width as i32).cloned()
+            }
+            Direction::Up => {
+                // Find output with minimum y (topmost)
+                self.outputs.iter().min_by_key(|o| o.y).cloned()
+            }
+            Direction::Down => {
+                // Find output with maximum y + height (bottommost)
+                self.outputs.iter().max_by_key(|o| o.y + o.height as i32).cloned()
+            }
+        }
+    }
+
     fn screen_bounds(&self) -> (i32, i32, i32, i32) {
         if self.outputs.is_empty() {
             return (0, 0, 1920, 1080); // Fallback

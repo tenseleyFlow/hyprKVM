@@ -183,6 +183,12 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     let mut capture_direction: Option<Direction> = None;
     let mut input_sequence: u64 = 0;
 
+    // Cursor-based edge detection state
+    let mut last_cursor_pos: Option<(i32, i32)> = None;
+    let mut edge_dwell_start: Option<(Direction, std::time::Instant)> = None;
+    const EDGE_THRESHOLD: i32 = 2; // Pixels from edge to count as "at edge"
+    const EDGE_DWELL_MS: u64 = 150; // How long cursor must be at edge to trigger
+
     // Connection storage: direction -> peer connection
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
         Arc::new(RwLock::new(HashMap::new()));
@@ -320,7 +326,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                     }
                 }
 
-                // Handle edge events
+                // Handle edge events from layer-shell barriers (for inter-monitor edges)
                 while let Some(edge_event) = edge_capture.try_recv() {
                     let direction = edge_event.direction;
 
@@ -351,6 +357,99 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             "EDGE: {:?} but no peer connected",
                             direction
                         );
+                    }
+                }
+
+                // Cursor-based edge detection (for absolute screen edges)
+                // This catches the case where cursor is at the edge and can't go further
+                if capture_direction.is_none() {
+                    if let Ok(cursor) = hypr_client.cursor_pos().await {
+                        let (cx, cy) = (cursor.x, cursor.y);
+
+                        // Determine if cursor is at a screen edge
+                        let at_edge: Option<Direction> = if cx <= EDGE_THRESHOLD {
+                            Some(Direction::Left)
+                        } else if cx >= screen_width as i32 - EDGE_THRESHOLD {
+                            Some(Direction::Right)
+                        } else if cy <= EDGE_THRESHOLD {
+                            Some(Direction::Up)
+                        } else if cy >= screen_height as i32 - EDGE_THRESHOLD {
+                            Some(Direction::Down)
+                        } else {
+                            None
+                        };
+
+                        // Check if we should trigger based on dwell time and movement
+                        if let Some(edge_dir) = at_edge {
+                            // Only care about edges with neighbors
+                            if enabled_edges.contains(&edge_dir) {
+                                let now = std::time::Instant::now();
+
+                                // Check if cursor is moving toward the edge (or staying at it)
+                                let moving_toward_edge = if let Some((last_x, last_y)) = last_cursor_pos {
+                                    match edge_dir {
+                                        Direction::Left => cx <= last_x,
+                                        Direction::Right => cx >= last_x,
+                                        Direction::Up => cy <= last_y,
+                                        Direction::Down => cy >= last_y,
+                                    }
+                                } else {
+                                    true
+                                };
+
+                                if moving_toward_edge {
+                                    match &edge_dwell_start {
+                                        Some((dir, start)) if *dir == edge_dir => {
+                                            // Already tracking this edge, check if dwell time exceeded
+                                            if now.duration_since(*start).as_millis() >= EDGE_DWELL_MS as u128 {
+                                                // Trigger!
+                                                let has_peer = {
+                                                    let peers = peers.read().await;
+                                                    peers.contains_key(&edge_dir)
+                                                };
+
+                                                if has_peer {
+                                                    info!(
+                                                        "CURSOR EDGE: {:?} at ({}, {}) - initiating transfer",
+                                                        edge_dir, cx, cy
+                                                    );
+
+                                                    if let Err(e) = transfer_manager.initiate_transfer(
+                                                        edge_dir,
+                                                        (cx, cy),
+                                                        screen_height,
+                                                        screen_width,
+                                                    ).await {
+                                                        tracing::warn!("Failed to initiate transfer: {}", e);
+                                                    }
+                                                } else {
+                                                    tracing::debug!(
+                                                        "CURSOR EDGE: {:?} at ({}, {}) but no peer connected",
+                                                        edge_dir, cx, cy
+                                                    );
+                                                }
+
+                                                // Reset to avoid repeated triggers
+                                                edge_dwell_start = None;
+                                            }
+                                        }
+                                        _ => {
+                                            // Start tracking this edge
+                                            tracing::trace!("Started edge dwell tracking for {:?} at ({}, {})", edge_dir, cx, cy);
+                                            edge_dwell_start = Some((edge_dir, now));
+                                        }
+                                    }
+                                } else {
+                                    // Moving away from edge, reset
+                                    edge_dwell_start = None;
+                                }
+                            }
+                        } else {
+                            // Not at any edge, reset
+                            edge_dwell_start = None;
+                        }
+
+                        last_cursor_pos = Some((cx, cy));
                     }
                 }
 
