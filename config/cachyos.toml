@@ -6,7 +6,7 @@ self_name = "cachyos"
 [[machines.neighbors]]
 name = "nixos"
 direction = "right"
-address = "100.65.247.95:24850"
+address = "192.168.0.85:24850"
 
 [network]
 listen_port = 24850
