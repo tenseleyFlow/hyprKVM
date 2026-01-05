@@ -405,6 +405,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             machine_name: "test".to_string(),
             capabilities: vec![],
+            my_direction_for_you: None,
         });
 
         client.send(&msg).await.unwrap();
