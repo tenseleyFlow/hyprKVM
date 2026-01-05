@@ -161,7 +161,7 @@
           # Package (without GUI for smaller binary)
           packages.default = pkgs.rustPlatform.buildRustPackage {
             pname = "hyprkvm";
-            version = "0.5.1";
+            version = "0.6.0";
             src = ./.;
 
             cargoLock = {
@@ -191,7 +191,7 @@
           # Package with GUI support
           packages.gui = pkgs.rustPlatform.buildRustPackage {
             pname = "hyprkvm";
-            version = "0.5.1";
+            version = "0.6.0";
             src = ./.;
 
             cargoLock = {

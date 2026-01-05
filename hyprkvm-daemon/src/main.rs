@@ -62,7 +62,7 @@ struct Cli {
     verbose: u8,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -144,19 +144,34 @@ fn main() -> anyhow::Result<()> {
             .join("hyprkvm.toml")
     });
 
-    // Handle GUI command outside of async runtime (Iced manages its own runtime)
+    // Handle GUI: either explicit `gui` command OR no command (default)
     #[cfg(feature = "gui")]
-    if matches!(cli.command, Commands::Gui) {
+    if cli.command.is_none() || matches!(cli.command, Some(Commands::Gui)) {
         info!("Starting HyprKVM GUI...");
         return gui::run_gui(&config_path);
     }
 
+    // If GUI feature not enabled and no command given, show helpful message
+    #[cfg(not(feature = "gui"))]
+    if cli.command.is_none() {
+        eprintln!("No command specified. Available commands:");
+        eprintln!("  hyprkvm daemon   - Start the KVM daemon");
+        eprintln!("  hyprkvm status   - Show daemon status");
+        eprintln!("  hyprkvm config   - Configuration management");
+        eprintln!();
+        eprintln!("To enable the GUI, rebuild with: cargo build --features gui");
+        std::process::exit(1);
+    }
+
     // Run async commands in tokio runtime
+    // At this point we know command is Some(...) because None cases are handled above
+    let command = cli.command.expect("command should be Some at this point");
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async {
-            match cli.command {
+            match command {
                 Commands::Daemon => {
                     info!("Starting HyprKVM daemon...");
                     run_daemon(&config_path).await
