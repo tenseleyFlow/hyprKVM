@@ -253,12 +253,19 @@ impl HyprKvmGui {
                 let _ = reader.read_line(&mut response);
             }
             // Give daemon time to shutdown
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
         }
 
         // Now spawn a new daemon process
+        // Try current_exe first, fall back to PATH lookup
         let exe = std::env::current_exe().unwrap_or_else(|_| "hyprkvm".into());
-        match Command::new(&exe)
+        tracing::info!("Restarting daemon with exe: {:?}", exe);
+
+        // Use setsid to create a new session so daemon survives GUI exit
+        // This is the Unix way to properly daemonize
+        match Command::new("setsid")
+            .arg("--fork")
+            .arg(&exe)
             .arg("daemon")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -267,14 +274,44 @@ impl HyprKvmGui {
         {
             Ok(_) => {
                 // Wait a moment for daemon to start
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                self.state.error = None;
-                self.state.needs_restart = false;
-                self.state.success = Some("Daemon restarted".to_string());
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+
+                // Verify daemon actually started by checking socket
+                if UnixStream::connect(&socket_path).is_ok() {
+                    self.state.error = None;
+                    self.state.needs_restart = false;
+                    self.state.success = Some("Daemon restarted".to_string());
+                } else {
+                    self.state.error = Some("Daemon spawn succeeded but socket not available".to_string());
+                    self.state.needs_restart = true;
+                }
             }
             Err(e) => {
-                self.state.error = Some(format!("Failed to start daemon: {}", e));
-                self.state.needs_restart = false;
+                // setsid not available, try direct spawn
+                tracing::warn!("setsid failed: {}, trying direct spawn", e);
+                match Command::new(&exe)
+                    .arg("daemon")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        if UnixStream::connect(&socket_path).is_ok() {
+                            self.state.error = None;
+                            self.state.needs_restart = false;
+                            self.state.success = Some("Daemon restarted".to_string());
+                        } else {
+                            self.state.error = Some("Daemon spawn succeeded but socket not available".to_string());
+                            self.state.needs_restart = true;
+                        }
+                    }
+                    Err(e2) => {
+                        self.state.error = Some(format!("Failed to start daemon: {}", e2));
+                        self.state.needs_restart = false;
+                    }
+                }
             }
         }
     }
