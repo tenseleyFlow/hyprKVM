@@ -211,95 +211,151 @@ impl EdgeCaptureState {
         tracing::info!("Screen bounds: ({}, {}) to ({}, {})", min_x, min_y, max_x, max_y);
 
         for direction in &self.config.enabled_edges.clone() {
-            // Find the correct output for this edge direction
-            let target_output = self.find_edge_output(*direction);
-            tracing::info!("  {:?} edge -> output at {:?}",
-                direction,
-                target_output.as_ref().map(|o| (o.x, o.y, o.width, o.height)));
+            // Find the output(s) for this edge direction
+            // Up/Down may return multiple outputs (all monitors at top/bottom)
+            let edge_outputs = self.find_edge_outputs(*direction);
+            tracing::info!("  {:?} edge -> {} output(s)", direction, edge_outputs.len());
 
-            let (width, height, anchor) = match direction {
-                Direction::Left => (
-                    self.config.barrier_size,
-                    target_output.as_ref().map(|o| o.height).unwrap_or((max_y - min_y) as u32),
-                    Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM,
-                ),
-                Direction::Right => (
-                    self.config.barrier_size,
-                    target_output.as_ref().map(|o| o.height).unwrap_or((max_y - min_y) as u32),
-                    Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM,
-                ),
-                Direction::Up => (
-                    target_output.as_ref().map(|o| o.width).unwrap_or((max_x - min_x) as u32),
-                    self.config.barrier_size,
-                    Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
-                ),
-                Direction::Down => (
-                    target_output.as_ref().map(|o| o.width).unwrap_or((max_x - min_x) as u32),
-                    self.config.barrier_size,
-                    Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
-                ),
-            };
+            // Create a barrier on each edge output
+            for target_output in &edge_outputs {
+                let (width, height, anchor) = match direction {
+                    Direction::Left => (
+                        self.config.barrier_size,
+                        target_output.height,
+                        Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM,
+                    ),
+                    Direction::Right => (
+                        self.config.barrier_size,
+                        target_output.height,
+                        Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM,
+                    ),
+                    Direction::Up => (
+                        target_output.width,
+                        self.config.barrier_size,
+                        Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+                    ),
+                    Direction::Down => (
+                        target_output.width,
+                        self.config.barrier_size,
+                        Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                    ),
+                };
 
-            // Create layer surface on the specific edge output
-            let surface = self.compositor_state.create_surface(qh);
-            let output_ref = target_output.as_ref().map(|o| &o.output);
-            let layer_surface = self.layer_shell.create_layer_surface(
-                qh,
-                surface,
-                Layer::Top, // Top layer to catch pointer
-                Some(format!("hyprkvm-edge-{}", direction)),
-                output_ref,
-            );
+                // Create layer surface on this specific output
+                let surface = self.compositor_state.create_surface(qh);
+                let layer_surface = self.layer_shell.create_layer_surface(
+                    qh,
+                    surface,
+                    Layer::Top, // Top layer to catch pointer
+                    Some(format!("hyprkvm-edge-{}", direction)),
+                    Some(&target_output.output),
+                );
 
-            tracing::info!(
-                "Creating {:?} barrier on output {:?}, size {}x{}",
-                direction,
-                target_output.as_ref().map(|o| format!("at ({}, {})", o.x, o.y)),
-                width,
-                height
-            );
+                tracing::info!(
+                    "Creating {:?} barrier on output at ({}, {}), size {}x{}",
+                    direction,
+                    target_output.x,
+                    target_output.y,
+                    width,
+                    height
+                );
 
-            // Configure the layer surface
-            layer_surface.set_anchor(anchor);
-            layer_surface.set_size(width, height);
-            layer_surface.set_exclusive_zone(-1); // Don't reserve space
-            layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+                // Configure the layer surface
+                layer_surface.set_anchor(anchor);
+                layer_surface.set_size(width, height);
+                layer_surface.set_exclusive_zone(-1); // Don't reserve space
+                layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
 
-            // Commit to apply configuration
-            layer_surface.commit();
+                // Commit to apply configuration
+                layer_surface.commit();
 
-            self.barriers.push(EdgeBarrier {
-                direction: *direction,
-                surface: layer_surface,
-                width,
-                height,
-                configured: false,
-            });
+                self.barriers.push(EdgeBarrier {
+                    direction: *direction,
+                    surface: layer_surface,
+                    width,
+                    height,
+                    configured: false,
+                });
+            }
+
+            // Fallback if no outputs found for this direction
+            if edge_outputs.is_empty() {
+                tracing::warn!("No outputs found for {:?} edge, creating fallback barrier", direction);
+                let (width, height, anchor) = match direction {
+                    Direction::Left => (
+                        self.config.barrier_size,
+                        (max_y - min_y) as u32,
+                        Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM,
+                    ),
+                    Direction::Right => (
+                        self.config.barrier_size,
+                        (max_y - min_y) as u32,
+                        Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM,
+                    ),
+                    Direction::Up => (
+                        (max_x - min_x) as u32,
+                        self.config.barrier_size,
+                        Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+                    ),
+                    Direction::Down => (
+                        (max_x - min_x) as u32,
+                        self.config.barrier_size,
+                        Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                    ),
+                };
+
+                let surface = self.compositor_state.create_surface(qh);
+                let layer_surface = self.layer_shell.create_layer_surface(
+                    qh,
+                    surface,
+                    Layer::Top,
+                    Some(format!("hyprkvm-edge-{}", direction)),
+                    None, // No specific output
+                );
+
+                layer_surface.set_anchor(anchor);
+                layer_surface.set_size(width, height);
+                layer_surface.set_exclusive_zone(-1);
+                layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+                layer_surface.commit();
+
+                self.barriers.push(EdgeBarrier {
+                    direction: *direction,
+                    surface: layer_surface,
+                    width,
+                    height,
+                    configured: false,
+                });
+            }
         }
     }
 
-    /// Find the output at the edge of the screen for a given direction
-    fn find_edge_output(&self, direction: Direction) -> Option<OutputInfo> {
+    /// Find the output(s) at the edge of the screen for a given direction
+    /// For Left/Right: returns single monitor at the edge
+    /// For Up/Down: returns ALL monitors at the top/bottom edge (for horizontal layouts)
+    fn find_edge_outputs(&self, direction: Direction) -> Vec<OutputInfo> {
         if self.outputs.is_empty() {
-            return None;
+            return vec![];
         }
 
         match direction {
             Direction::Left => {
-                // Find output with minimum x (leftmost)
-                self.outputs.iter().min_by_key(|o| o.x).cloned()
+                // Find output with minimum x (leftmost) - single monitor
+                self.outputs.iter().min_by_key(|o| o.x).cloned().into_iter().collect()
             }
             Direction::Right => {
-                // Find output with maximum x + width (rightmost)
-                self.outputs.iter().max_by_key(|o| o.x + o.width as i32).cloned()
+                // Find output with maximum x + width (rightmost) - single monitor
+                self.outputs.iter().max_by_key(|o| o.x + o.width as i32).cloned().into_iter().collect()
             }
             Direction::Up => {
-                // Find output with minimum y (topmost)
-                self.outputs.iter().min_by_key(|o| o.y).cloned()
+                // Find ALL outputs at minimum y (all topmost monitors)
+                let min_y = self.outputs.iter().map(|o| o.y).min().unwrap_or(0);
+                self.outputs.iter().filter(|o| o.y == min_y).cloned().collect()
             }
             Direction::Down => {
-                // Find output with maximum y + height (bottommost)
-                self.outputs.iter().max_by_key(|o| o.y + o.height as i32).cloned()
+                // Find ALL outputs at maximum y + height (all bottommost monitors)
+                let max_bottom = self.outputs.iter().map(|o| o.y + o.height as i32).max().unwrap_or(0);
+                self.outputs.iter().filter(|o| o.y + o.height as i32 == max_bottom).cloned().collect()
             }
         }
     }
