@@ -49,6 +49,7 @@ pub struct MonitorInfo {
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    pub scale: f32,
 }
 
 /// Configuration for edge barriers
@@ -130,27 +131,28 @@ impl EdgeCaptureState {
         let mut used_monitors: Vec<bool> = vec![false; self.config.monitors.len()];
         let mut assigned_outputs: Vec<bool> = vec![false; self.outputs.len()];
 
+        // Helper to check if a monitor's logical size matches an output
+        let sizes_match = |mon: &MonitorInfo, out_w: u32, out_h: u32| -> bool {
+            // Use the monitor's actual scale from Hyprland
+            let scale = mon.scale as f64;
+            let logical_w = (mon.width as f64 / scale).round() as u32;
+            let logical_h = (mon.height as f64 / scale).round() as u32;
+
+            // Allow 1 pixel tolerance for rounding differences
+            let w_match = (logical_w as i32 - out_w as i32).abs() <= 1;
+            let h_match = (logical_h as i32 - out_h as i32).abs() <= 1;
+            w_match && h_match
+        };
+
         // First pass: try to find unique matches
         for (out_idx, out) in self.outputs.iter_mut().enumerate() {
-            // Find monitors that could match this output size (considering possible scales)
             let mut candidates: Vec<usize> = Vec::new();
             for (i, mon) in self.config.monitors.iter().enumerate() {
                 if used_monitors[i] {
                     continue;
                 }
-                // Check if sizes match directly
-                if mon.width == out.width && mon.height == out.height {
+                if sizes_match(mon, out.width, out.height) {
                     candidates.push(i);
-                    continue;
-                }
-                // Check common scale factors (1.5, 2.0)
-                for scale in [1.5_f64, 2.0_f64] {
-                    let scaled_w = (mon.width as f64 / scale).round() as u32;
-                    let scaled_h = (mon.height as f64 / scale).round() as u32;
-                    if scaled_w == out.width && scaled_h == out.height {
-                        candidates.push(i);
-                        break;
-                    }
                 }
             }
 
@@ -158,8 +160,8 @@ impl EdgeCaptureState {
             if candidates.len() == 1 {
                 let i = candidates[0];
                 let mon = &self.config.monitors[i];
-                tracing::info!("Matched output {}x{} to monitor {} at ({}, {})",
-                    out.width, out.height, mon.name, mon.x, mon.y);
+                tracing::info!("Matched output {}x{} to monitor {} at ({}, {}) scale={}",
+                    out.width, out.height, mon.name, mon.x, mon.y, mon.scale);
                 out.x = mon.x;
                 out.y = mon.y;
                 used_monitors[i] = true;
@@ -176,21 +178,14 @@ impl EdgeCaptureState {
             if assigned_outputs[out_idx] {
                 continue; // Already assigned in first pass
             }
-            // Find first unused monitor that could match
+            // Find first unused monitor that matches
             for (i, mon) in self.config.monitors.iter().enumerate() {
                 if used_monitors[i] {
                     continue;
                 }
-                // Check all possible scales
-                let matches = (mon.width == out.width && mon.height == out.height)
-                    || [1.5_f64, 2.0_f64].iter().any(|&scale| {
-                        let scaled_w = (mon.width as f64 / scale).round() as u32;
-                        let scaled_h = (mon.height as f64 / scale).round() as u32;
-                        scaled_w == out.width && scaled_h == out.height
-                    });
-                if matches {
-                    tracing::info!("Assigned remaining output {}x{} to monitor {} at ({}, {})",
-                        out.width, out.height, mon.name, mon.x, mon.y);
+                if sizes_match(mon, out.width, out.height) {
+                    tracing::info!("Assigned remaining output {}x{} to monitor {} at ({}, {}) scale={}",
+                        out.width, out.height, mon.name, mon.x, mon.y, mon.scale);
                     out.x = mon.x;
                     out.y = mon.y;
                     used_monitors[i] = true;
@@ -615,26 +610,18 @@ impl PointerHandler for EdgeCaptureState {
                             if should_trigger {
                                 self.last_trigger_time.insert(barrier.direction, now);
 
-                                // Calculate screen position
-                                let (min_x, min_y, max_x, max_y) = self.screen_bounds();
-                                let screen_pos = match barrier.direction {
-                                    Direction::Left => (min_x, min_y + y as i32),
-                                    Direction::Right => (max_x - 1, min_y + y as i32),
-                                    Direction::Up => (min_x + x as i32, min_y),
-                                    Direction::Down => (min_x + x as i32, max_y - 1),
-                                };
-
+                                // Send edge event with direction only
+                                // Main daemon will query Hyprland for actual cursor position
+                                // and verify we're at screen boundary before triggering transfer
                                 let edge_event = EdgeEvent {
                                     direction: barrier.direction,
-                                    position: screen_pos,
+                                    position: (0, 0), // Placeholder - main daemon uses Hyprland cursor pos
                                     timestamp: now,
                                 };
 
                                 tracing::info!(
-                                    "Edge trigger: {:?} at screen ({}, {})",
-                                    barrier.direction,
-                                    screen_pos.0,
-                                    screen_pos.1
+                                    "Edge event: {:?} barrier triggered",
+                                    barrier.direction
                                 );
 
                                 let _ = self.event_tx.send(edge_event);

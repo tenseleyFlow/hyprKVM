@@ -232,14 +232,22 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         info!("  {} at ({}, {}) {}x{}", mon.name, mon.x, mon.y, mon.width, mon.height);
     }
 
-    // Calculate screen bounds (supports negative coordinates and multi-monitor layouts)
+    // Calculate screen bounds in LOGICAL coordinates (cursor position uses logical coords)
+    // Hyprland reports physical dimensions, but cursor_pos() returns logical coordinates
+    // Logical size = physical size / scale
     let screen_min_x: i32 = monitors.iter().map(|m| m.x).min().unwrap_or(0);
     let screen_min_y: i32 = monitors.iter().map(|m| m.y).min().unwrap_or(0);
-    let screen_max_x: i32 = monitors.iter().map(|m| m.x + m.width as i32).max().unwrap_or(1920);
-    let screen_max_y: i32 = monitors.iter().map(|m| m.y + m.height as i32).max().unwrap_or(1080);
+    let screen_max_x: i32 = monitors.iter().map(|m| {
+        let logical_width = (m.width as f32 / m.scale).round() as i32;
+        m.x + logical_width
+    }).max().unwrap_or(1920);
+    let screen_max_y: i32 = monitors.iter().map(|m| {
+        let logical_height = (m.height as f32 / m.scale).round() as i32;
+        m.y + logical_height
+    }).max().unwrap_or(1080);
     let screen_width: u32 = (screen_max_x - screen_min_x) as u32;
     let screen_height: u32 = (screen_max_y - screen_min_y) as u32;
-    info!("Screen bounds: ({}, {}) to ({}, {}), dimensions: {}x{}",
+    info!("Screen bounds (logical): ({}, {}) to ({}, {}), dimensions: {}x{}",
           screen_min_x, screen_min_y, screen_max_x, screen_max_y, screen_width, screen_height);
 
     // Determine which edges have network neighbors
@@ -265,6 +273,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         y: m.y,
         width: m.width,
         height: m.height,
+        scale: m.scale,
     }).collect();
     let edge_capture = input::EdgeCapture::new(input::EdgeCaptureConfig {
         barrier_size: 1,
@@ -996,6 +1005,31 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                 while let Some(edge_event) = edge_capture.try_recv() {
                     let direction = edge_event.direction;
 
+                    // Verify cursor is actually at screen boundary using Hyprland
+                    // (barrier placement can be wrong on multi-monitor setups)
+                    let cursor_pos = match hypr_client.cursor_pos().await {
+                        Ok(pos) => (pos.x, pos.y),
+                        Err(_) => continue, // Can't verify, skip this event
+                    };
+                    let is_at_screen_edge = match direction {
+                        Direction::Left => cursor_pos.0 <= screen_min_x + 5,
+                        Direction::Right => cursor_pos.0 >= screen_max_x - 5,
+                        Direction::Up => cursor_pos.1 <= screen_min_y + 5,
+                        Direction::Down => cursor_pos.1 >= screen_max_y - 5,
+                    };
+
+                    if !is_at_screen_edge {
+                        tracing::debug!(
+                            "EDGE: {:?} barrier triggered but cursor at ({}, {}) not at screen edge (bounds: {} to {}), ignoring",
+                            direction,
+                            cursor_pos.0,
+                            cursor_pos.1,
+                            screen_min_x,
+                            screen_max_x
+                        );
+                        continue;
+                    }
+
                     // Check if we have a peer in this direction
                     let has_peer = {
                         let peers = peers.read().await;
@@ -1011,8 +1045,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 info!(
                                     "EDGE: {:?} at ({}, {}) - returning control",
                                     direction,
-                                    edge_event.position.0,
-                                    edge_event.position.1
+                                    cursor_pos.0,
+                                    cursor_pos.1
                                 );
                                 if let Err(e) = transfer_manager.return_control().await {
                                     tracing::warn!("Failed to return control: {}", e);
@@ -1033,20 +1067,20 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             info!(
                                 "EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
                                 direction,
-                                edge_event.position.0,
-                                edge_event.position.1
+                                cursor_pos.0,
+                                cursor_pos.1
                             );
                         } else {
                             info!(
                                 "EDGE: {:?} at ({}, {}) - initiating transfer",
                                 direction,
-                                edge_event.position.0,
-                                edge_event.position.1
+                                cursor_pos.0,
+                                cursor_pos.1
                             );
 
                             if let Err(e) = transfer_manager.initiate_transfer(
                                 direction,
-                                edge_event.position,
+                                cursor_pos,
                                 screen_min_x,
                                 screen_min_y,
                                 screen_max_x,
