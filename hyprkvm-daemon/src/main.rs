@@ -916,22 +916,38 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 };
 
                                 // Check if any window is further in the requested direction on same monitor
-                                let has_window_in_direction = clients.iter().any(|client| {
-                                    let mon = client.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32;
-                                    if mon != focused_monitor.id { return false; }
-
-                                    let cx = client.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-                                    let cy = client.get("at").and_then(|a| a.get(1)).and_then(|y| y.as_i64()).unwrap_or(0) as i32;
-                                    let cw = client.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(0) as i32;
-                                    let ch = client.get("size").and_then(|s| s.get(1)).and_then(|h| h.as_i64()).unwrap_or(0) as i32;
-
-                                    match direction {
-                                        Direction::Left => cx + cw < win_x + 10,
-                                        Direction::Right => cx > win_x + win_w - 10,
-                                        Direction::Up => cy + ch < win_y + 10,
-                                        Direction::Down => cy > win_y + win_h - 10,
+                                // For Up/Down: use monitor proximity instead of window detection (bars/panels cause false positives)
+                                let mon_logical_h = (focused_monitor.height as f32 / focused_monitor.scale).round() as i32;
+                                let has_window_in_direction = match direction {
+                                    Direction::Up => {
+                                        // Window is at top edge if its top is within 100px of monitor top
+                                        let near_top = win_y <= focused_monitor.y + 100;
+                                        !near_top
                                     }
-                                });
+                                    Direction::Down => {
+                                        // Window is at bottom edge if its bottom is within 100px of monitor bottom
+                                        let win_bottom = win_y + win_h;
+                                        let mon_bottom = focused_monitor.y + mon_logical_h;
+                                        let near_bottom = win_bottom >= mon_bottom - 100;
+                                        !near_bottom
+                                    }
+                                    Direction::Left | Direction::Right => {
+                                        // Window-based detection for horizontal directions
+                                        clients.iter().any(|client| {
+                                            let mon = client.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32;
+                                            if mon != focused_monitor.id { return false; }
+
+                                            let cx = client.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                                            let cw = client.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(0) as i32;
+
+                                            match direction {
+                                                Direction::Left => cx + cw < win_x + 10,
+                                                Direction::Right => cx > win_x + win_w - 10,
+                                                _ => false,
+                                            }
+                                        })
+                                    }
+                                };
 
                                 info!("  RECOVERY edge_check: has_window_in_direction={} -> at_edge={}", has_window_in_direction, !has_window_in_direction);
                                 !has_window_in_direction
@@ -1742,27 +1758,46 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 }
                             };
 
-                            info!("  edge_check: active window at ({},{}) size {}x{}, {} clients on monitor",
+                            // Calculate monitor bounds in logical coordinates
+                            let mon_logical_h = (focused_monitor.height as f32 / focused_monitor.scale).round() as i32;
+
+                            info!("  edge_check: active window at ({},{}) size {}x{}, {} clients on monitor, mon_y={}, mon_h={}",
                                   win_x, win_y, win_w, win_h,
-                                  clients.iter().filter(|c| c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32 == focused_monitor.id).count());
+                                  clients.iter().filter(|c| c.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32 == focused_monitor.id).count(),
+                                  focused_monitor.y, mon_logical_h);
 
-                            // Check if any window is further in the requested direction on same monitor
-                            let has_window_in_direction = clients.iter().any(|client| {
-                                let mon = client.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32;
-                                if mon != focused_monitor.id { return false; }
-
-                                let cx = client.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-                                let cy = client.get("at").and_then(|a| a.get(1)).and_then(|y| y.as_i64()).unwrap_or(0) as i32;
-                                let cw = client.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(0) as i32;
-                                let ch = client.get("size").and_then(|s| s.get(1)).and_then(|h| h.as_i64()).unwrap_or(0) as i32;
-
-                                match direction {
-                                    Direction::Left => cx + cw < win_x + 10, // Window is to the left
-                                    Direction::Right => cx > win_x + win_w - 10, // Window is to the right
-                                    Direction::Up => cy + ch < win_y + 10,
-                                    Direction::Down => cy > win_y + win_h - 10,
+                            // For Up/Down: check if window is near monitor edge (accounts for bars/panels)
+                            // For Left/Right: check if any window is further in that direction
+                            let has_window_in_direction = match direction {
+                                Direction::Up => {
+                                    // Window is at top edge if its top is within 100px of monitor top (allows for bars)
+                                    let near_top = win_y <= focused_monitor.y + 100;
+                                    !near_top // has_window_in_direction = !near_top, so at_edge = near_top
                                 }
-                            });
+                                Direction::Down => {
+                                    // Window is at bottom edge if its bottom is within 100px of monitor bottom
+                                    let win_bottom = win_y + win_h;
+                                    let mon_bottom = focused_monitor.y + mon_logical_h;
+                                    let near_bottom = win_bottom >= mon_bottom - 100;
+                                    !near_bottom // has_window_in_direction = !near_bottom, so at_edge = near_bottom
+                                }
+                                Direction::Left | Direction::Right => {
+                                    // For Left/Right, use window-based detection
+                                    clients.iter().any(|client| {
+                                        let mon = client.get("monitor").and_then(|m| m.as_i64()).unwrap_or(-1) as i32;
+                                        if mon != focused_monitor.id { return false; }
+
+                                        let cx = client.get("at").and_then(|a| a.get(0)).and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+                                        let cw = client.get("size").and_then(|s| s.get(0)).and_then(|w| w.as_i64()).unwrap_or(0) as i32;
+
+                                        match direction {
+                                            Direction::Left => cx + cw < win_x + 10,
+                                            Direction::Right => cx > win_x + win_w - 10,
+                                            _ => false,
+                                        }
+                                    })
+                                }
+                            };
 
                             info!("  edge_check: has_window_in_direction={} -> at_edge={}", has_window_in_direction, !has_window_in_direction);
                             !has_window_in_direction
