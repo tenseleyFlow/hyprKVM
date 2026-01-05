@@ -311,6 +311,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
     // Track which direction we're capturing for
     let mut capture_direction: Option<Direction> = None;
+    // Track relay mode: (from, to) when forwarding input from one peer to another
+    let mut relay_mode: Option<(Direction, Direction)> = None;
     let mut input_sequence: u64 = 0;
 
     // Escape key detection
@@ -1348,7 +1350,24 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         // Transfer complete
                                     }
                                     Message::InputEvent(input_payload) => {
-                                        // Inject input via emulation module
+                                        // Check if we're in relay mode and this is from the relay source
+                                        if let Some((relay_from, relay_to)) = relay_mode {
+                                            if direction == relay_from {
+                                                // Forward to relay target instead of injecting locally
+                                                tracing::trace!("Relaying input from {:?} to {:?}", relay_from, relay_to);
+                                                // Need to drop current borrow and get relay target
+                                                drop(peers);
+                                                let mut peers_guard = peers_arc.write().await;
+                                                if let Some(target_peer) = peers_guard.get_mut(&relay_to) {
+                                                    if let Err(e) = target_peer.send(&Message::InputEvent(input_payload)).await {
+                                                        tracing::error!("Failed to relay input to {:?}: {}", relay_to, e);
+                                                    }
+                                                }
+                                                continue; // Skip local injection
+                                            }
+                                        }
+
+                                        // Normal case: inject input via emulation module
                                         if let Some(ref mut emu) = input_emulator {
                                             use hyprkvm_common::protocol::InputEventType;
                                             match input_payload.event {
@@ -1637,6 +1656,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         if let Some(ref mut emu) = input_emulator {
                             emu.keyboard.reset_all_keys();
                         }
+                    }
+                    transfer::TransferEvent::StartRelay { from, to } => {
+                        info!("Starting input relay: {:?} -> {:?}", from, to);
+                        relay_mode = Some((from, to));
+                        // No local device grabbing needed - we're forwarding received input
+                    }
+                    transfer::TransferEvent::StopRelay => {
+                        info!("Stopping input relay");
+                        relay_mode = None;
                     }
                     transfer::TransferEvent::SyncClipboardOutgoing { direction } => {
                         // Sync clipboard to the peer in the given direction

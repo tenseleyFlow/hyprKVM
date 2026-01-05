@@ -25,15 +25,25 @@ pub enum TransferState {
         started_at: Instant,
         /// True if transfer was triggered via keyboard (Super+Arrow)
         keyboard_initiated: bool,
+        /// If we initiated from ReceivedControl, this is the original source
+        relay_from: Option<Direction>,
     },
 
-    /// We sent control away, forwarding input
+    /// We sent control away, forwarding input (from local devices)
     RemoteActive {
         target: Direction,
         transfer_id: u64,
         entered_at: Instant,
         /// True if transfer was triggered via keyboard (Super+Arrow)
         keyboard_initiated: bool,
+    },
+
+    /// We are relaying input from one machine to another (no local devices)
+    Relaying {
+        from: Direction,
+        to: Direction,
+        transfer_id: u64,
+        entered_at: Instant,
     },
 
     /// We received control from another machine
@@ -53,6 +63,10 @@ impl TransferState {
         matches!(self, TransferState::RemoteActive { .. })
     }
 
+    pub fn is_relaying(&self) -> bool {
+        matches!(self, TransferState::Relaying { .. })
+    }
+
     pub fn is_receiving(&self) -> bool {
         matches!(self, TransferState::ReceivedControl { .. })
     }
@@ -61,12 +75,17 @@ impl TransferState {
 /// Events from the transfer manager
 #[derive(Debug, Clone)]
 pub enum TransferEvent {
-    /// Start capturing and forwarding input
+    /// Start capturing and forwarding input (from local devices)
     /// `keyboard_initiated` is true if the transfer was triggered via keyboard (Super+Arrow),
     /// false if triggered via CLI or other non-keyboard means
     StartCapture { direction: Direction, keyboard_initiated: bool },
     /// Stop capturing, return to local
     StopCapture,
+    /// Start relaying input from one direction to another (no local devices needed)
+    /// Used when a deviceless machine needs to forward input through
+    StartRelay { from: Direction, to: Direction },
+    /// Stop relaying
+    StopRelay,
     /// Start injecting received input
     StartInjection { from: Direction },
     /// Stop injecting
@@ -124,9 +143,10 @@ impl TransferManager {
     ) -> Result<(), TransferError> {
         let mut state = self.state.write().await;
 
-        // Only transfer from local or received state
-        match &*state {
-            TransferState::Local | TransferState::ReceivedControl { .. } => {}
+        // Track if we're initiating from ReceivedControl (for relay mode)
+        let relay_from = match &*state {
+            TransferState::Local => None,
+            TransferState::ReceivedControl { from, .. } => Some(*from),
             TransferState::Initiating { .. } => {
                 return Err(TransferError::AlreadyTransferring);
             }
@@ -135,7 +155,12 @@ impl TransferManager {
                     "Already in remote active state".to_string(),
                 ));
             }
-        }
+            TransferState::Relaying { .. } => {
+                return Err(TransferError::InvalidState(
+                    "Already relaying".to_string(),
+                ));
+            }
+        };
 
         let transfer_id = self.next_transfer_id();
 
@@ -166,6 +191,7 @@ impl TransferManager {
             transfer_id,
             started_at: Instant::now(),
             keyboard_initiated,
+            relay_from,
         };
 
         // Send Enter message
@@ -196,6 +222,7 @@ impl TransferManager {
                 target,
                 transfer_id,
                 keyboard_initiated,
+                relay_from,
                 ..
             } => {
                 if *transfer_id != ack.transfer_id {
@@ -209,34 +236,67 @@ impl TransferManager {
 
                 if !ack.success {
                     tracing::warn!("EnterAck rejected: {:?}", ack.error);
-                    *state = TransferState::Local;
+                    // If we were relaying, go back to ReceivedControl
+                    if let Some(from) = relay_from {
+                        *state = TransferState::ReceivedControl {
+                            from: *from,
+                            transfer_id: *transfer_id,
+                            entered_at: Instant::now(),
+                        };
+                    } else {
+                        *state = TransferState::Local;
+                    }
                     return Err(TransferError::Rejected(
                         ack.error.unwrap_or_else(|| "Unknown".to_string()),
                     ));
                 }
 
-                tracing::info!(
-                    "Transfer accepted, cursor at {:?}, keyboard_initiated={}",
-                    ack.actual_cursor_pos,
-                    keyboard_initiated
-                );
-
                 let direction = *target;
                 let tid = *transfer_id;
                 let kbd_init = *keyboard_initiated;
+                let from_dir = *relay_from;
 
-                *state = TransferState::RemoteActive {
-                    target: direction,
-                    transfer_id: tid,
-                    entered_at: Instant::now(),
-                    keyboard_initiated: kbd_init,
-                };
+                // Check if this is a relay (initiated from ReceivedControl) or direct transfer
+                if let Some(from) = from_dir {
+                    tracing::info!(
+                        "Relay transfer accepted: {:?} -> {:?}, cursor at {:?}",
+                        from,
+                        direction,
+                        ack.actual_cursor_pos
+                    );
 
-                // Start capturing input
-                self.event_tx
-                    .send(TransferEvent::StartCapture { direction, keyboard_initiated: kbd_init })
-                    .await
-                    .map_err(|_| TransferError::ChannelClosed)?;
+                    *state = TransferState::Relaying {
+                        from,
+                        to: direction,
+                        transfer_id: tid,
+                        entered_at: Instant::now(),
+                    };
+
+                    // Start relaying input (don't grab local devices, forward from source)
+                    self.event_tx
+                        .send(TransferEvent::StartRelay { from, to: direction })
+                        .await
+                        .map_err(|_| TransferError::ChannelClosed)?;
+                } else {
+                    tracing::info!(
+                        "Transfer accepted, cursor at {:?}, keyboard_initiated={}",
+                        ack.actual_cursor_pos,
+                        keyboard_initiated
+                    );
+
+                    *state = TransferState::RemoteActive {
+                        target: direction,
+                        transfer_id: tid,
+                        entered_at: Instant::now(),
+                        keyboard_initiated: kbd_init,
+                    };
+
+                    // Start capturing input from local devices
+                    self.event_tx
+                        .send(TransferEvent::StartCapture { direction, keyboard_initiated: kbd_init })
+                        .await
+                        .map_err(|_| TransferError::ChannelClosed)?;
+                }
 
                 // Trigger clipboard sync (if enabled, handled by main loop)
                 self.event_tx
@@ -282,6 +342,11 @@ impl TransferManager {
                 // We're forwarding to them, but they're sending control back to us
                 // This shouldn't happen normally - they should send Leave, not Enter
                 tracing::warn!("Received Enter while in RemoteActive - unusual but accepting");
+            }
+            TransferState::Relaying { .. } => {
+                // We're relaying input, but receiving a new Enter
+                // This is unusual but we'll accept it
+                tracing::warn!("Received Enter while Relaying - unusual but accepting");
             }
         }
 
@@ -440,8 +505,45 @@ impl TransferManager {
                 *state = TransferState::Local;
                 Ok(())
             }
+            TransferState::Relaying { from, transfer_id, .. } => {
+                if *transfer_id != payload.transfer_id {
+                    tracing::warn!("Leave transfer_id mismatch (relay)");
+                }
+
+                let from_dir = *from;
+                tracing::info!("Relay target returned control, resuming ReceivedControl from {:?}", from_dir);
+
+                // Stop relaying
+                self.event_tx
+                    .send(TransferEvent::StopRelay)
+                    .await
+                    .map_err(|_| TransferError::ChannelClosed)?;
+
+                // Send LeaveAck to the target
+                let direction = payload.to_direction.opposite();
+                self.event_tx
+                    .send(TransferEvent::SendMessage {
+                        direction,
+                        message: Message::LeaveAck,
+                    })
+                    .await
+                    .map_err(|_| TransferError::ChannelClosed)?;
+
+                // Resume injection from original source
+                self.event_tx
+                    .send(TransferEvent::StartInjection { from: from_dir })
+                    .await
+                    .map_err(|_| TransferError::ChannelClosed)?;
+
+                *state = TransferState::ReceivedControl {
+                    from: from_dir,
+                    transfer_id: *transfer_id,
+                    entered_at: Instant::now(),
+                };
+                Ok(())
+            }
             _ => Err(TransferError::InvalidState(
-                "Not in RemoteActive state".to_string(),
+                "Not in RemoteActive or Relaying state".to_string(),
             )),
         }
     }
@@ -451,14 +553,33 @@ impl TransferManager {
         let mut state = self.state.write().await;
 
         match &*state {
-            TransferState::Initiating { .. } => {
+            TransferState::Initiating { relay_from, .. } => {
                 tracing::warn!("Aborting pending transfer");
-                *state = TransferState::Local;
+                // If we were initiating from ReceivedControl, go back there
+                if let Some(from) = relay_from {
+                    *state = TransferState::ReceivedControl {
+                        from: *from,
+                        transfer_id: 0,
+                        entered_at: Instant::now(),
+                    };
+                } else {
+                    *state = TransferState::Local;
+                }
             }
             TransferState::RemoteActive { .. } => {
                 tracing::warn!("Aborting remote active state");
                 let _ = self.event_tx.send(TransferEvent::StopCapture).await;
                 *state = TransferState::Local;
+            }
+            TransferState::Relaying { from, .. } => {
+                tracing::warn!("Aborting relay state");
+                let _ = self.event_tx.send(TransferEvent::StopRelay).await;
+                // Go back to receiving from original source
+                *state = TransferState::ReceivedControl {
+                    from: *from,
+                    transfer_id: 0,
+                    entered_at: Instant::now(),
+                };
             }
             TransferState::ReceivedControl { .. } => {
                 tracing::warn!("Aborting received control state");
