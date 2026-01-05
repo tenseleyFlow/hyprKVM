@@ -5,10 +5,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-# Set WorkingDirectory to your hyprKVM repo path
-WorkingDirectory=%h/path/to/hyprKVM
-# Uses nix develop to provide required libraries
-ExecStart=/bin/sh -c 'exec nix develop --command ./target/release/hyprkvm daemon'
+# For system-installed binaries (AUR, RPM, etc.)
+ExecStart=/usr/bin/hyprkvm daemon
 Restart=on-failure
 RestartSec=1
 
