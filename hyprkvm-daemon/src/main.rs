@@ -275,6 +275,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         height: m.height,
         scale: m.scale,
     }).collect();
+
+    // Store per-monitor logical bounds for cursor edge detection
+    // Each tuple: (x, y, logical_width, logical_height)
+    let monitor_logical_bounds: Vec<(i32, i32, i32, i32)> = monitors.iter().map(|m| {
+        let logical_width = (m.width as f32 / m.scale).round() as i32;
+        let logical_height = (m.height as f32 / m.scale).round() as i32;
+        (m.x, m.y, logical_width, logical_height)
+    }).collect();
+
     let edge_capture = input::EdgeCapture::new(input::EdgeCaptureConfig {
         barrier_size: 1,
         enabled_edges: enabled_edges.clone(),
@@ -1081,16 +1090,31 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let (cx, cy) = (cursor.x, cursor.y);
 
                         // Determine if cursor is at a screen edge
+                        // For Left/Right: use global screen bounds
+                        // For Up/Down: check per-monitor bounds (different monitors have different heights)
                         let at_edge: Option<Direction> = if cx <= EDGE_THRESHOLD {
                             Some(Direction::Left)
                         } else if cx >= screen_width as i32 - EDGE_THRESHOLD {
                             Some(Direction::Right)
-                        } else if cy <= EDGE_THRESHOLD {
-                            Some(Direction::Up)
-                        } else if cy >= screen_height as i32 - EDGE_THRESHOLD {
-                            Some(Direction::Down)
                         } else {
-                            None
+                            // Check per-monitor Up/Down edges
+                            let mut edge_found = None;
+                            for &(mon_x, mon_y, mon_w, mon_h) in &monitor_logical_bounds {
+                                // Check if cursor is within this monitor's x range
+                                if cx >= mon_x && cx < mon_x + mon_w {
+                                    // Check Up edge (top of this monitor)
+                                    if cy <= mon_y + EDGE_THRESHOLD && cy >= mon_y {
+                                        edge_found = Some(Direction::Up);
+                                        break;
+                                    }
+                                    // Check Down edge (bottom of this monitor)
+                                    if cy >= mon_y + mon_h - EDGE_THRESHOLD && cy <= mon_y + mon_h {
+                                        edge_found = Some(Direction::Down);
+                                        break;
+                                    }
+                                }
+                            }
+                            edge_found
                         };
 
                         // Debug: Log when cursor is at Up/Down edge
