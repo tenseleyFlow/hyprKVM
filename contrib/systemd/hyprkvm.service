@@ -5,10 +5,10 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-# Adjust the path below to match your installation:
-#   - If installed via cargo: %h/.cargo/bin/hyprkvm
-#   - If built from source: /path/to/hyprKVM/target/release/hyprkvm
-ExecStart=%h/.cargo/bin/hyprkvm daemon
+# Set WorkingDirectory to your hyprKVM repo path
+WorkingDirectory=%h/path/to/hyprKVM
+# Uses nix develop to provide required libraries
+ExecStart=/bin/sh -c 'exec nix develop --command ./target/release/hyprkvm daemon'
 Restart=on-failure
 RestartSec=1
 
