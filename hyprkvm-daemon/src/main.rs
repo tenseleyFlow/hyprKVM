@@ -1789,8 +1789,26 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     }
                                 }
                             } else {
-                                // Not in ReceivedControl - check barrier
-                                if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
+                                // Not in ReceivedControl - check cooldown first
+                                let in_cooldown = if let Some(last_return) = last_control_return {
+                                    last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128
+                                } else {
+                                    false
+                                };
+
+                                if in_cooldown {
+                                    tracing::info!("IPC Move {:?}: in cooldown, doing local movefocus", direction);
+                                    let hypr_dir = match direction {
+                                        Direction::Left => "l",
+                                        Direction::Right => "r",
+                                        Direction::Up => "u",
+                                        Direction::Down => "d",
+                                    };
+                                    match hypr_client.dispatch("movefocus", hypr_dir).await {
+                                        Ok(_) => IpcResponse::Ok { message: "movefocus (cooldown)".to_string() },
+                                        Err(e) => IpcResponse::Error { message: format!("movefocus failed: {}", e) },
+                                    }
+                                } else if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                     IpcResponse::Error { message: "Barrier enabled".to_string() }
                                 } else {
                                     // Initiate new transfer
