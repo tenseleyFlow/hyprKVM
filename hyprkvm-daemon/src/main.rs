@@ -967,10 +967,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                                 if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                     info!("RECOVERY HOTKEY: Barrier enabled, blocking transfer");
-                                } else if !input_grabber.has_devices() {
-                                    // Should never happen (no devices = no recovery hotkey events)
-                                    // but guard against it anyway
-                                    tracing::debug!("RECOVERY HOTKEY: No input devices, cannot initiate");
                                 } else {
                                     info!("RECOVERY HOTKEY: At edge with peer, initiating transfer to {:?}", direction);
                                     if let Err(e) = transfer_manager.initiate_transfer(
@@ -1076,14 +1072,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                             info!(
                                 "EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
-                                direction,
-                                cursor_pos.0,
-                                cursor_pos.1
-                            );
-                        } else if !input_grabber.has_devices() {
-                            // No input devices = cannot initiate transfers (deviceless machine)
-                            tracing::debug!(
-                                "EDGE: {:?} at ({}, {}) - no input devices, cannot initiate",
                                 direction,
                                 cursor_pos.0,
                                 cursor_pos.1
@@ -1230,12 +1218,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                     if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                                         info!(
                                                             "CURSOR EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
-                                                            edge_dir, cx, cy
-                                                        );
-                                                    } else if !input_grabber.has_devices() {
-                                                        // No input devices = cannot initiate transfers
-                                                        tracing::debug!(
-                                                            "CURSOR EDGE: {:?} at ({}, {}) - no input devices, cannot initiate",
                                                             edge_dir, cx, cy
                                                         );
                                                     } else {
@@ -1854,8 +1836,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     // At edge with peer but received control from different direction
                                     if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                         IpcResponse::Error { message: "Barrier enabled".to_string() }
-                                    } else if !input_grabber.has_devices() {
-                                        IpcResponse::Error { message: "No input devices - cannot initiate transfer".to_string() }
                                     } else {
                                         // Initiate new transfer
                                         let cursor_pos = hypr_client.cursor_pos().await
@@ -1899,8 +1879,6 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     }
                                 } else if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                     IpcResponse::Error { message: "Barrier enabled".to_string() }
-                                } else if !input_grabber.has_devices() {
-                                    IpcResponse::Error { message: "No input devices - cannot initiate transfer".to_string() }
                                 } else {
                                     // Initiate new transfer
                                     let cursor_pos = hypr_client.cursor_pos().await
@@ -2092,32 +2070,25 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 if peers_guard.get(&dir).is_some() {
                                     drop(peers_guard);
 
-                                    // Check if we have input devices before initiating
-                                    if !input_grabber.has_devices() {
-                                        IpcResponse::Error {
-                                            message: "No input devices - cannot initiate transfer".to_string(),
-                                        }
-                                    } else {
-                                        // Get cursor position (use center of total screen)
-                                        let cursor_pos = hypr_client.cursor_pos().await
-                                            .map(|c| (c.x, c.y))
-                                            .unwrap_or(((screen_min_x + screen_max_x) / 2, (screen_min_y + screen_max_y) / 2));
+                                    // Get cursor position (use center of total screen)
+                                    let cursor_pos = hypr_client.cursor_pos().await
+                                        .map(|c| (c.x, c.y))
+                                        .unwrap_or(((screen_min_x + screen_max_x) / 2, (screen_min_y + screen_max_y) / 2));
 
-                                        // Initiate transfer (CLI-initiated, not keyboard)
-                                        info!("IPC Switch: calling initiate_transfer");
-                                        match transfer_manager.initiate_transfer(dir, cursor_pos, screen_min_x, screen_min_y, screen_max_x, screen_max_y, false).await {
-                                            Ok(()) => {
-                                                let machine_name = config.machines.neighbors
-                                                    .iter()
-                                                    .find(|n| n.direction == dir)
-                                                    .map(|n| n.name.clone())
-                                                    .unwrap_or_else(|| format!("{:?}", dir));
-                                                info!("IPC Switch: initiate_transfer succeeded, returning response to CLI");
-                                                IpcResponse::Transferred { to_machine: machine_name }
-                                            }
-                                            Err(e) => IpcResponse::Error {
-                                                message: format!("Transfer failed: {}", e),
-                                            }
+                                    // Initiate transfer (CLI-initiated, not keyboard)
+                                    info!("IPC Switch: calling initiate_transfer");
+                                    match transfer_manager.initiate_transfer(dir, cursor_pos, screen_min_x, screen_min_y, screen_max_x, screen_max_y, false).await {
+                                        Ok(()) => {
+                                            let machine_name = config.machines.neighbors
+                                                .iter()
+                                                .find(|n| n.direction == dir)
+                                                .map(|n| n.name.clone())
+                                                .unwrap_or_else(|| format!("{:?}", dir));
+                                            info!("IPC Switch: initiate_transfer succeeded, returning response to CLI");
+                                            IpcResponse::Transferred { to_machine: machine_name }
+                                        }
+                                        Err(e) => IpcResponse::Error {
+                                            message: format!("Transfer failed: {}", e),
                                         }
                                     }
                                 } else {

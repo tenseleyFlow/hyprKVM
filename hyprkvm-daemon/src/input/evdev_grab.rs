@@ -30,9 +30,6 @@ pub struct EvdevGrabber {
     recovery_active: Arc<AtomicU64>,
     /// The direction to watch for in recovery mode (encoded as u8: 1=Up, 2=Down, 3=Left, 4=Right, 0=none)
     recovery_direction: Arc<AtomicU64>,
-    /// Flag indicating whether this grabber has input devices to grab
-    /// If false, this machine cannot initiate transfers (but can still receive them)
-    has_devices: Arc<AtomicBool>,
     event_rx: mpsc::Receiver<GrabEvent>,
     _thread: thread::JoinHandle<()>,
 }
@@ -46,15 +43,13 @@ impl EvdevGrabber {
         let recovery_clone = recovery_active.clone();
         let recovery_direction = Arc::new(AtomicU64::new(0));
         let recovery_dir_clone = recovery_direction.clone();
-        let has_devices = Arc::new(AtomicBool::new(false));
-        let has_devices_clone = has_devices.clone();
 
         let (event_tx, event_rx) = mpsc::channel();
 
         let thread = thread::Builder::new()
             .name("evdev-grabber".to_string())
             .spawn(move || {
-                if let Err(e) = run_evdev_grabber(active_clone, recovery_clone, recovery_dir_clone, has_devices_clone, event_tx) {
+                if let Err(e) = run_evdev_grabber(active_clone, recovery_clone, recovery_dir_clone, event_tx) {
                     tracing::error!("Evdev grabber error: {}", e);
                 }
             })
@@ -64,7 +59,6 @@ impl EvdevGrabber {
             active,
             recovery_active,
             recovery_direction,
-            has_devices,
             event_rx,
             _thread: thread,
         })
@@ -105,13 +99,6 @@ impl EvdevGrabber {
     /// Check if currently grabbing
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::SeqCst)
-    }
-
-    /// Check if this grabber has input devices available
-    /// If false, this machine cannot initiate transfers (no devices to grab)
-    /// but can still receive control from other machines
-    pub fn has_devices(&self) -> bool {
-        self.has_devices.load(Ordering::SeqCst)
     }
 
     /// Try to receive a grab event (non-blocking)
@@ -197,20 +184,15 @@ fn run_evdev_grabber(
     active: Arc<AtomicBool>,
     recovery_active: Arc<AtomicU64>,
     recovery_direction: Arc<AtomicU64>,
-    has_devices: Arc<AtomicBool>,
     event_tx: mpsc::Sender<GrabEvent>,
 ) -> Result<(), EvdevGrabError> {
     let device_paths = find_input_devices();
 
     if device_paths.is_empty() {
-        tracing::warn!("No input devices found - this machine cannot initiate transfers");
-        // Leave has_devices as false (default)
         return Err(EvdevGrabError::NoDevices);
     }
 
-    // Mark that we have devices - transfers can be initiated from this machine
-    has_devices.store(true, Ordering::SeqCst);
-    tracing::info!("Found {} input device paths (can initiate transfers)", device_paths.len());
+    tracing::info!("Found {} input device paths", device_paths.len());
     for path in &device_paths {
         tracing::debug!("  {}", path.display());
     }
