@@ -457,52 +457,25 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     .map(|n| n.direction)
                             };
 
-                            // Check if we need to update our config due to direction change
+                            // NOTE: We no longer auto-correct direction based on peer claims.
+                            // Direction changes are now handled explicitly via DirectionChange messages
+                            // sent when the user changes direction in the GUI.
+                            // This prevents the config from being overwritten on reconnect.
                             if let Some(peer_dir) = hello.my_direction_for_you {
                                 let new_dir = peer_dir.opposite();
                                 let existing = neighbors_for_accept
                                     .iter()
                                     .find(|n| n.name == hello.machine_name);
 
-                                let needs_update = match existing {
-                                    Some(n) => n.direction != new_dir,
-                                    None => true, // Peer not in our config - could add them
-                                };
-
-                                if needs_update {
-                                    if let Some(existing_neighbor) = existing {
-                                        info!(
-                                            "Direction mismatch for {}: our config says {:?}, peer says we should be {:?}",
+                                if let Some(existing_neighbor) = existing {
+                                    if existing_neighbor.direction != new_dir {
+                                        // Just log the mismatch, don't auto-correct
+                                        // The user should update both configs via the GUI
+                                        tracing::warn!(
+                                            "Direction mismatch for {}: our config says {:?}, peer claims {:?}. \
+                                             Use the GUI to update directions on both machines.",
                                             hello.machine_name, existing_neighbor.direction, new_dir
                                         );
-
-                                        // Load, update, and save config
-                                        match Config::load(&config_path_for_accept) {
-                                            Ok(mut cfg) => {
-                                                // Find and update the neighbor's direction
-                                                for neighbor in &mut cfg.machines.neighbors {
-                                                    if neighbor.name == hello.machine_name {
-                                                        info!("Updating {} direction: {:?} -> {:?}",
-                                                              neighbor.name, neighbor.direction, new_dir);
-                                                        neighbor.direction = new_dir;
-                                                        break;
-                                                    }
-                                                }
-
-                                                // Save updated config
-                                                if let Err(e) = cfg.save(&config_path_for_accept) {
-                                                    tracing::error!("Failed to save updated config: {}", e);
-                                                } else {
-                                                    info!("Config updated with new direction, signaling restart...");
-                                                    let _ = restart_tx_for_accept.try_send(
-                                                        format!("Direction changed for {}", hello.machine_name)
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                tracing::error!("Failed to load config for update: {}", e);
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -1399,6 +1372,63 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                             }
                                         });
                                     }
+                                    Message::DirectionChange(payload) => {
+                                        // Peer is notifying us that they changed our relative direction
+                                        // We need to update our config to store them in the opposite direction
+                                        let new_dir_for_peer = payload.your_direction_from_me.opposite();
+                                        info!("Received DirectionChange: peer says we are {:?} from them, so we store them as {:?}",
+                                            payload.your_direction_from_me, new_dir_for_peer);
+
+                                        // Find the peer's name from config based on direction
+                                        let peer_name = config.machines.neighbors
+                                            .iter()
+                                            .find(|n| n.direction == direction)
+                                            .map(|n| n.name.clone())
+                                            .unwrap_or_else(|| "unknown".to_string());
+
+                                        // Load, update, and save config
+                                        let config_path_clone = config_path.clone();
+                                        match Config::load(&config_path_clone) {
+                                            Ok(mut cfg) => {
+                                                let mut found = false;
+                                                for neighbor in &mut cfg.machines.neighbors {
+                                                    if neighbor.name == peer_name {
+                                                        info!("DirectionChange: updating {} direction {:?} -> {:?}",
+                                                            neighbor.name, neighbor.direction, new_dir_for_peer);
+                                                        neighbor.direction = new_dir_for_peer;
+                                                        found = true;
+                                                        break;
+                                                    }
+                                                }
+
+                                                if found {
+                                                    if let Err(e) = cfg.save(&config_path_clone) {
+                                                        tracing::error!("DirectionChange: failed to save config: {}", e);
+                                                        let _ = peer.send(&Message::DirectionChangeAck { success: false }).await;
+                                                    } else {
+                                                        info!("DirectionChange: config updated, signaling restart");
+                                                        let _ = peer.send(&Message::DirectionChangeAck { success: true }).await;
+                                                        // Signal restart to apply new edge barriers
+                                                        let _ = restart_tx.try_send(format!("Direction sync from {}", peer_name));
+                                                    }
+                                                } else {
+                                                    tracing::warn!("DirectionChange: peer {} not found in config", peer_name);
+                                                    let _ = peer.send(&Message::DirectionChangeAck { success: false }).await;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("DirectionChange: failed to load config: {}", e);
+                                                let _ = peer.send(&Message::DirectionChangeAck { success: false }).await;
+                                            }
+                                        }
+                                    }
+                                    Message::DirectionChangeAck { success } => {
+                                        if success {
+                                            info!("DirectionChangeAck: peer acknowledged direction update");
+                                        } else {
+                                            tracing::warn!("DirectionChangeAck: peer failed to update direction");
+                                        }
+                                    }
                                     _ => {
                                         tracing::debug!("Unhandled message: {:?}", msg);
                                     }
@@ -2153,6 +2183,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 }
 
                                 // Check for direction changes (requires restart for edge barriers)
+                                // Also send DirectionChange messages to notify peers
+                                let mut direction_changes: Vec<(String, Direction)> = Vec::new();
                                 for new_neighbor in &new_config.machines.neighbors {
                                     if let Some(old_neighbor) = config.machines.neighbors
                                         .iter()
@@ -2164,6 +2196,36 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                 new_neighbor.name, old_neighbor.direction, new_neighbor.direction
                                             ));
                                             needs_restart = true;
+                                            // Track this change to notify the peer
+                                            direction_changes.push((new_neighbor.name.clone(), new_neighbor.direction));
+                                        }
+                                    }
+                                }
+
+                                // Send DirectionChange messages to affected peers
+                                // We need to send on the OLD direction since that's where the peer is connected
+                                for (peer_name, new_direction) in &direction_changes {
+                                    // Find the OLD direction for this peer from current config
+                                    let old_direction = config.machines.neighbors
+                                        .iter()
+                                        .find(|n| &n.name == peer_name)
+                                        .map(|n| n.direction);
+
+                                    if let Some(old_dir) = old_direction {
+                                        let mut peers_guard = peers.write().await;
+                                        if let Some(peer) = peers_guard.get_mut(&old_dir) {
+                                            info!("Sending DirectionChange to {}: you are now {:?} from me",
+                                                peer_name, new_direction);
+                                            let msg = Message::DirectionChange(
+                                                hyprkvm_common::protocol::DirectionChangePayload {
+                                                    your_direction_from_me: *new_direction,
+                                                }
+                                            );
+                                            if let Err(e) = peer.send(&msg).await {
+                                                tracing::warn!("Failed to send DirectionChange to {}: {}", peer_name, e);
+                                            }
+                                        } else {
+                                            tracing::warn!("Peer {} not connected on {:?}", peer_name, old_dir);
                                         }
                                     }
                                 }

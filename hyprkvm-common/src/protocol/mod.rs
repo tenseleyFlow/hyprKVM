@@ -37,6 +37,10 @@ pub enum Message {
     ClipboardRequest(ClipboardRequestPayload),
     ClipboardData(ClipboardDataPayload),
 
+    // Configuration sync
+    DirectionChange(DirectionChangePayload),
+    DirectionChangeAck { success: bool },
+
     // Health
     Ping { timestamp: u64 },
     Pong { timestamp: u64 },
@@ -87,6 +91,20 @@ pub struct TopologyPayload {
 pub struct NeighborInfo {
     pub name: String,
     pub direction: Direction,
+}
+
+// ============================================================================
+// Configuration Sync Messages
+// ============================================================================
+
+/// Notification that a peer has changed our relative direction in their config.
+/// When received, the recipient should update their config to match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectionChangePayload {
+    /// The direction the sender has configured for the recipient.
+    /// The recipient should store the OPPOSITE direction for the sender.
+    /// e.g., if sender says "I have you on my Right", recipient stores sender as "Left"
+    pub your_direction_from_me: Direction,
 }
 
 // ============================================================================
