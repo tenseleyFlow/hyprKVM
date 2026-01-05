@@ -144,6 +144,7 @@ fn find_input_devices() -> Vec<PathBuf> {
                     let dev_name = dev.name().unwrap_or("unknown").to_lowercase();
 
                     // Skip devices that are clearly NOT keyboard/mouse
+                    // Also skip hyprkvm's own virtual injection devices (passthrough)
                     if dev_name.contains("power")
                         || dev_name.contains("sleep")
                         || dev_name.contains("button")
@@ -154,6 +155,8 @@ fn find_input_devices() -> Vec<PathBuf> {
                         || dev_name.contains("dualsense")
                         || dev_name.contains("dualshock")
                         || dev_name.contains("controller touchpad")
+                        || dev_name.contains("passthrough")
+                        || dev_name.contains("hyprkvm")
                     {
                         tracing::debug!("Skipping non-keyboard/mouse device: {}", dev_name);
                         continue;
