@@ -43,6 +43,7 @@ impl Peer {
             protocol_version: PROTOCOL_VERSION,
             machine_name: our_name.to_string(),
             capabilities: our_capabilities.to_vec(),
+            my_direction_for_you: None, // Direction not known in this context
         });
 
         conn.send(&hello).await?;

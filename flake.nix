@@ -34,6 +34,14 @@
 
           # TLS
           openssl
+
+          # GUI (Iced) dependencies
+          vulkan-loader
+          libGL
+          xorg.libX11
+          xorg.libXcursor
+          xorg.libXrandr
+          xorg.libXi
         ];
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
@@ -53,6 +61,9 @@
           # For wayland-scanner
           WAYLAND_PROTOCOLS = "${pkgs.wayland-protocols}/share/wayland-protocols";
 
+          # Graphics library paths for GUI
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libDeps;
+
           shellHook = ''
             echo "HyprKVM development shell"
             echo "Rust: $(rustc --version)"
@@ -61,7 +72,7 @@
           '';
         };
 
-        # Package
+        # Package (without GUI for smaller binary)
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "hyprkvm";
           version = "0.5.1";
@@ -83,6 +94,44 @@
               HyprKVM enables seamless keyboard/mouse control transfer between
               Linux machines running Hyprland. Move past your last workspace
               to switch to another machine.
+            '';
+            homepage = "https://github.com/tenseleyFlow/hyprKVM";
+            license = licenses.mit;
+            platforms = platforms.linux;
+            mainProgram = "hyprkvm";
+          };
+        };
+
+        # Package with GUI support
+        packages.gui = pkgs.rustPlatform.buildRustPackage {
+          pname = "hyprkvm";
+          version = "0.5.1";
+          src = ./.;
+
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+
+          nativeBuildInputs = buildDeps ++ [ pkgs.makeWrapper ];
+          buildInputs = libDeps;
+
+          # Build with GUI feature
+          buildFeatures = [ "gui" ];
+
+          # Wrap binary to include graphics library paths
+          postInstall = ''
+            wrapProgram $out/bin/hyprkvm \
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath libDeps}
+          '';
+
+          meta = with pkgs.lib; {
+            description = "Hyprland-native software KVM switch (with GUI)";
+            longDescription = ''
+              HyprKVM enables seamless keyboard/mouse control transfer between
+              Linux machines running Hyprland. Move past your last workspace
+              to switch to another machine.
+
+              This package includes the GUI configuration tool.
             '';
             homepage = "https://github.com/tenseleyFlow/hyprKVM";
             license = licenses.mit;

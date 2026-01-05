@@ -61,5 +61,8 @@ wl-clipboard-rs = "0.9"
 hex = "0.4"
 base64 = "0.22"
 
+# GUI (optional)
+iced = { version = "0.13", features = ["canvas", "tokio", "tiny-skia"] }
+
 # Internal crates
 hyprkvm-common = { path = "hyprkvm-common" }

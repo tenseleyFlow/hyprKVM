@@ -10,6 +10,10 @@ description = "HyprKVM daemon - Hyprland-native software KVM switch"
 name = "hyprkvm"
 path = "src/main.rs"
 
+[features]
+default = ["gui"]
+gui = ["iced"]
+
 [dependencies]
 hyprkvm-common = { workspace = true }
 
@@ -61,6 +65,9 @@ evdev = "0.12"
 wl-clipboard-rs = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }
+
+# GUI (optional)
+iced = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

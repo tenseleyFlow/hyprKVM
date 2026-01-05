@@ -128,9 +128,10 @@ impl EdgeCaptureState {
         // Logical size = physical size / scale
 
         let mut used_monitors: Vec<bool> = vec![false; self.config.monitors.len()];
+        let mut assigned_outputs: Vec<bool> = vec![false; self.outputs.len()];
 
         // First pass: try to find unique matches
-        for out in &mut self.outputs {
+        for (out_idx, out) in self.outputs.iter_mut().enumerate() {
             // Find monitors that could match this output size (considering possible scales)
             let mut candidates: Vec<usize> = Vec::new();
             for (i, mon) in self.config.monitors.iter().enumerate() {
@@ -162,6 +163,7 @@ impl EdgeCaptureState {
                 out.x = mon.x;
                 out.y = mon.y;
                 used_monitors[i] = true;
+                assigned_outputs[out_idx] = true;
             } else if candidates.len() > 1 {
                 tracing::debug!("Multiple candidates for output {}x{}: {:?}",
                     out.width, out.height,
@@ -170,9 +172,9 @@ impl EdgeCaptureState {
         }
 
         // Second pass: assign remaining outputs to remaining monitors by order
-        for out in &mut self.outputs {
-            if out.x != 0 || out.y != 0 {
-                continue; // Already assigned
+        for (out_idx, out) in self.outputs.iter_mut().enumerate() {
+            if assigned_outputs[out_idx] {
+                continue; // Already assigned in first pass
             }
             // Find first unused monitor that could match
             for (i, mon) in self.config.monitors.iter().enumerate() {
@@ -192,6 +194,7 @@ impl EdgeCaptureState {
                     out.x = mon.x;
                     out.y = mon.y;
                     used_monitors[i] = true;
+                    assigned_outputs[out_idx] = true;
                     break;
                 }
             }

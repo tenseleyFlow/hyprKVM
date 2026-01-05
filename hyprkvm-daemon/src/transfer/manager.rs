@@ -116,8 +116,10 @@ impl TransferManager {
         &self,
         direction: Direction,
         cursor_pos: (i32, i32),
-        screen_height: u32,
-        screen_width: u32,
+        screen_min_x: i32,
+        screen_min_y: i32,
+        screen_max_x: i32,
+        screen_max_y: i32,
         keyboard_initiated: bool,
     ) -> Result<(), TransferError> {
         let mut state = self.state.write().await;
@@ -137,15 +139,20 @@ impl TransferManager {
 
         let transfer_id = self.next_transfer_id();
 
-        // Calculate edge-relative cursor position
+        // Calculate edge-relative cursor position (0.0-1.0 along the edge)
+        let screen_width = (screen_max_x - screen_min_x) as f64;
+        let screen_height = (screen_max_y - screen_min_y) as f64;
+
         let edge_relative = match direction {
             Direction::Left | Direction::Right => {
-                cursor_pos.1 as f64 / screen_height as f64
+                // Y position relative to screen height
+                (cursor_pos.1 - screen_min_y) as f64 / screen_height
             }
             Direction::Up | Direction::Down => {
-                cursor_pos.0 as f64 / screen_width as f64
+                // X position relative to screen width
+                (cursor_pos.0 - screen_min_x) as f64 / screen_width
             }
-        };
+        }.clamp(0.0, 1.0); // Ensure within valid range
 
         tracing::info!(
             "Initiating transfer to {:?}, transfer_id={}",
@@ -250,8 +257,10 @@ impl TransferManager {
         &self,
         from_direction: Direction,
         payload: EnterPayload,
-        screen_width: u32,
-        screen_height: u32,
+        screen_min_x: i32,
+        screen_min_y: i32,
+        screen_max_x: i32,
+        screen_max_y: i32,
     ) -> Result<(i32, i32), TransferError> {
         let mut state = self.state.write().await;
 
@@ -276,29 +285,34 @@ impl TransferManager {
             }
         }
 
-        // Calculate actual cursor position
+        // Calculate actual cursor position using proper screen bounds
+        let screen_width = (screen_max_x - screen_min_x) as f64;
+        let screen_height = (screen_max_y - screen_min_y) as f64;
+
         let cursor_pos = match payload.cursor_pos {
             CursorEntryPos::EdgeRelative(rel) => {
-                // Entry is from the perspective of the sender
-                // So if they say "from_direction = Right", they're to our right
-                // and we should position cursor at our right edge
+                // from_direction indicates which edge the cursor enters from
+                // e.g., from_direction=Left means cursor enters at our left edge
                 match from_direction {
                     Direction::Left => {
-                        // They're to our left, cursor enters from left edge
-                        let y = (rel * screen_height as f64) as i32;
-                        (0, y)
+                        // Cursor enters from left edge
+                        let y = screen_min_y + (rel * screen_height) as i32;
+                        (screen_min_x, y)
                     }
                     Direction::Right => {
-                        let y = (rel * screen_height as f64) as i32;
-                        (screen_width as i32 - 1, y)
+                        // Cursor enters from right edge
+                        let y = screen_min_y + (rel * screen_height) as i32;
+                        (screen_max_x - 1, y)
                     }
                     Direction::Up => {
-                        let x = (rel * screen_width as f64) as i32;
-                        (x, 0)
+                        // Cursor enters from top edge
+                        let x = screen_min_x + (rel * screen_width) as i32;
+                        (x, screen_min_y)
                     }
                     Direction::Down => {
-                        let x = (rel * screen_width as f64) as i32;
-                        (x, screen_height as i32 - 1)
+                        // Cursor enters from bottom edge
+                        let x = screen_min_x + (rel * screen_width) as i32;
+                        (x, screen_max_y - 1)
                     }
                 }
             }

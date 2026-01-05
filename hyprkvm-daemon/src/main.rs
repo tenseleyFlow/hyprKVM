@@ -12,6 +12,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod clipboard;
 mod config;
+#[cfg(feature = "gui")]
+mod gui;
 mod hyprland;
 mod input;
 mod ipc;
@@ -82,6 +84,10 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+
+    /// Launch the graphical configuration interface
+    #[cfg(feature = "gui")]
+    Gui,
 }
 
 #[derive(Subcommand)]
@@ -92,8 +98,7 @@ enum ConfigAction {
     Reload,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Set up logging with dual output (stderr + file)
@@ -131,10 +136,7 @@ async fn main() -> anyhow::Result<()> {
         );
     subscriber.init();
 
-    // Keep the guard alive for the duration of the program
-    // (it's moved into the async context below)
-
-    // Load configuration
+    // Load configuration path
     let config_path = cli.config.unwrap_or_else(|| {
         dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -142,24 +144,39 @@ async fn main() -> anyhow::Result<()> {
             .join("hyprkvm.toml")
     });
 
-    match cli.command {
-        Commands::Daemon => {
-            info!("Starting HyprKVM daemon...");
-            run_daemon(&config_path).await
-        }
-        Commands::Status => {
-            show_status().await
-        }
-        Commands::Move { direction } => {
-            handle_move(&direction).await
-        }
-        Commands::Config { action } => {
-            match action {
-                ConfigAction::Show => show_config(&config_path),
-                ConfigAction::Reload => reload_config().await,
-            }
-        }
+    // Handle GUI command outside of async runtime (Iced manages its own runtime)
+    #[cfg(feature = "gui")]
+    if matches!(cli.command, Commands::Gui) {
+        info!("Starting HyprKVM GUI...");
+        return gui::run_gui(&config_path);
     }
+
+    // Run async commands in tokio runtime
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            match cli.command {
+                Commands::Daemon => {
+                    info!("Starting HyprKVM daemon...");
+                    run_daemon(&config_path).await
+                }
+                Commands::Status => {
+                    show_status().await
+                }
+                Commands::Move { direction } => {
+                    handle_move(&direction).await
+                }
+                Commands::Config { action } => {
+                    match action {
+                        ConfigAction::Show => show_config(&config_path),
+                        ConfigAction::Reload => reload_config().await,
+                    }
+                }
+                #[cfg(feature = "gui")]
+                Commands::Gui => unreachable!("GUI handled above"),
+            }
+        })
 }
 
 async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
@@ -171,7 +188,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     use hyprkvm_common::protocol::{Message, HelloPayload, PROTOCOL_VERSION};
 
     // Load or create default config
-    let config = match Config::load(config_path) {
+    let mut config = match Config::load(config_path) {
         Ok(cfg) => cfg,
         Err(e) => {
             tracing::warn!("Failed to load config: {e}, using defaults");
@@ -200,9 +217,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
         info!("  {} at ({}, {}) {}x{}", mon.name, mon.x, mon.y, mon.width, mon.height);
     }
 
-    // Calculate screen bounds
-    let screen_width: u32 = monitors.iter().map(|m| m.x as u32 + m.width).max().unwrap_or(1920);
-    let screen_height: u32 = monitors.iter().map(|m| m.y as u32 + m.height).max().unwrap_or(1080);
+    // Calculate screen bounds (supports negative coordinates and multi-monitor layouts)
+    let screen_min_x: i32 = monitors.iter().map(|m| m.x).min().unwrap_or(0);
+    let screen_min_y: i32 = monitors.iter().map(|m| m.y).min().unwrap_or(0);
+    let screen_max_x: i32 = monitors.iter().map(|m| m.x + m.width as i32).max().unwrap_or(1920);
+    let screen_max_y: i32 = monitors.iter().map(|m| m.y + m.height as i32).max().unwrap_or(1080);
+    let screen_width: u32 = (screen_max_x - screen_min_x) as u32;
+    let screen_height: u32 = (screen_max_y - screen_min_y) as u32;
+    info!("Screen bounds: ({}, {}) to ({}, {}), dimensions: {}x{}",
+          screen_min_x, screen_min_y, screen_max_x, screen_max_y, screen_width, screen_height);
 
     // Determine which edges have network neighbors
     let mut enabled_edges = Vec::new();
@@ -333,12 +356,17 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     };
     info!("Listening for connections on {} (TLS: {})", server.local_addr(), tls_enabled);
 
+    // Channel for signaling config changes that require restart
+    let (restart_tx, mut restart_rx) = tokio::sync::mpsc::channel::<String>(1);
+
     // Spawn task to accept incoming connections
     let machine_name = config.machines.self_name.clone();
     let neighbors_for_accept = config.machines.neighbors.clone();
     let peers_for_accept = peers.clone();
     let known_hosts_for_accept = known_hosts.clone();
     let known_hosts_path_for_accept = known_hosts_path.clone();
+    let config_path_for_accept = config_path.to_path_buf();
+    let restart_tx_for_accept = restart_tx.clone();
     let accept_handle = tokio::spawn(async move {
         loop {
             match server.accept().await {
@@ -393,11 +421,67 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 continue;
                             }
 
-                            // Determine direction based on peer's machine name
-                            let direction = neighbors_for_accept
-                                .iter()
-                                .find(|n| n.name == hello.machine_name)
-                                .map(|n| n.direction);
+                            // Determine direction: use opposite of what peer told us, or fall back to config
+                            let direction = if let Some(peer_dir) = hello.my_direction_for_you {
+                                // Peer says "I have you as X", so we store them as opposite(X)
+                                Some(peer_dir.opposite())
+                            } else {
+                                // Legacy: look up in our config
+                                neighbors_for_accept
+                                    .iter()
+                                    .find(|n| n.name == hello.machine_name)
+                                    .map(|n| n.direction)
+                            };
+
+                            // Check if we need to update our config due to direction change
+                            if let Some(peer_dir) = hello.my_direction_for_you {
+                                let new_dir = peer_dir.opposite();
+                                let existing = neighbors_for_accept
+                                    .iter()
+                                    .find(|n| n.name == hello.machine_name);
+
+                                let needs_update = match existing {
+                                    Some(n) => n.direction != new_dir,
+                                    None => true, // Peer not in our config - could add them
+                                };
+
+                                if needs_update {
+                                    if let Some(existing_neighbor) = existing {
+                                        info!(
+                                            "Direction mismatch for {}: our config says {:?}, peer says we should be {:?}",
+                                            hello.machine_name, existing_neighbor.direction, new_dir
+                                        );
+
+                                        // Load, update, and save config
+                                        match Config::load(&config_path_for_accept) {
+                                            Ok(mut cfg) => {
+                                                // Find and update the neighbor's direction
+                                                for neighbor in &mut cfg.machines.neighbors {
+                                                    if neighbor.name == hello.machine_name {
+                                                        info!("Updating {} direction: {:?} -> {:?}",
+                                                              neighbor.name, neighbor.direction, new_dir);
+                                                        neighbor.direction = new_dir;
+                                                        break;
+                                                    }
+                                                }
+
+                                                // Save updated config
+                                                if let Err(e) = cfg.save(&config_path_for_accept) {
+                                                    tracing::error!("Failed to save updated config: {}", e);
+                                                } else {
+                                                    info!("Config updated with new direction, signaling restart...");
+                                                    let _ = restart_tx_for_accept.try_send(
+                                                        format!("Direction changed for {}", hello.machine_name)
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to load config for update: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             if let Some(dir) = direction {
                                 let mut peers = peers_for_accept.write().await;
@@ -405,12 +489,13 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     info!("Already have connection for {:?}, dropping incoming from {}", dir, hello.machine_name);
                                     // Drop the incoming connection, keep the existing one
                                 } else {
-                                    info!("Storing incoming connection from {} as {:?}", hello.machine_name, dir);
+                                    info!("Storing incoming connection from {} as {:?} (peer claimed {:?})",
+                                          hello.machine_name, dir, hello.my_direction_for_you);
                                     peers.insert(dir, conn);
                                 }
                             } else {
                                 tracing::warn!(
-                                    "Unknown peer '{}' connected - not in neighbors list",
+                                    "Unknown peer '{}' connected - not in neighbors list and no direction provided",
                                     hello.machine_name
                                 );
                                 // Connection will be dropped
@@ -479,11 +564,13 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                 match conn_result {
                     Ok(mut conn) => {
-                        // Send Hello
+                        // Send Hello with our direction for this peer
+                        // Peer will use the opposite direction to store us
                         let hello = Message::Hello(HelloPayload {
                             protocol_version: PROTOCOL_VERSION,
                             machine_name: machine_name.clone(),
                             capabilities: vec![],
+                            my_direction_for_you: Some(direction),
                         });
 
                         if let Err(e) = conn.send(&hello).await {
@@ -858,8 +945,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     if let Err(e) = transfer_manager.initiate_transfer(
                                         direction,
                                         cursor_pos,
-                                        screen_height,
-                                        screen_width,
+                                        screen_min_x,
+                                        screen_min_y,
+                                        screen_max_x,
+                                        screen_max_y,
                                         true, // keyboard-initiated (recovery hotkey)
                                     ).await {
                                         tracing::error!("Failed to initiate transfer from recovery hotkey: {}", e);
@@ -943,8 +1032,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             if let Err(e) = transfer_manager.initiate_transfer(
                                 direction,
                                 edge_event.position,
-                                screen_height,
-                                screen_width,
+                                screen_min_x,
+                                screen_min_y,
+                                screen_max_x,
+                                screen_max_y,
                                 false, // not keyboard-initiated (mouse edge)
                             ).await {
                                 tracing::warn!("Failed to initiate transfer: {}", e);
@@ -1046,8 +1137,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                         if let Err(e) = transfer_manager.initiate_transfer(
                                                             edge_dir,
                                                             (cx, cy),
-                                                            screen_height,
-                                                            screen_width,
+                                                            screen_min_x,
+                                                            screen_min_y,
+                                                            screen_max_x,
+                                                            screen_max_y,
                                                             false, // not keyboard-initiated (cursor edge)
                                                         ).await {
                                                             tracing::warn!("Failed to initiate transfer: {}", e);
@@ -1127,8 +1220,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         match transfer_manager.handle_enter(
                                             direction,
                                             payload,
-                                            screen_width,
-                                            screen_height,
+                                            screen_min_x,
+                                            screen_min_y,
+                                            screen_max_x,
+                                            screen_max_y,
                                         ).await {
                                             Ok(pos) => {
                                                 info!("Positioned cursor at {:?}", pos);
@@ -1575,8 +1670,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         if let Err(e) = transfer_manager.initiate_transfer(
                                             direction,
                                             cursor_pos,
-                                            screen_height,
-                                            screen_width,
+                                            screen_min_x,
+                                            screen_min_y,
+                                            screen_max_x,
+                                            screen_max_y,
                                             true, // keyboard-initiated (IPC Move from keybind)
                                         ).await {
                                             IpcResponse::Error { message: format!("Transfer failed: {}", e) }
@@ -1598,8 +1695,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     if let Err(e) = transfer_manager.initiate_transfer(
                                         direction,
                                         cursor_pos,
-                                        screen_height,
-                                        screen_width,
+                                        screen_min_x,
+                                        screen_min_y,
+                                        screen_max_x,
+                                        screen_max_y,
                                         true, // keyboard-initiated (IPC Move from keybind)
                                     ).await {
                                         IpcResponse::Error { message: format!("Transfer failed: {}", e) }
@@ -1778,24 +1877,14 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 if peers_guard.get(&dir).is_some() {
                                     drop(peers_guard);
 
-                                    // Get cursor position and screen size from Hyprland
-                                    let (cursor_pos, screen_width, screen_height) = match hypr_client.monitors().await {
-                                        Ok(monitors) => {
-                                            if let Some(focused) = monitors.iter().find(|m| m.focused) {
-                                                // Use center of screen as cursor position for switch
-                                                let cx = focused.x + focused.width as i32 / 2;
-                                                let cy = focused.y + focused.height as i32 / 2;
-                                                ((cx, cy), focused.width, focused.height)
-                                            } else {
-                                                ((0, 0), 1920, 1080) // Fallback
-                                            }
-                                        }
-                                        Err(_) => ((0, 0), 1920, 1080), // Fallback
-                                    };
+                                    // Get cursor position (use center of total screen)
+                                    let cursor_pos = hypr_client.cursor_pos().await
+                                        .map(|c| (c.x, c.y))
+                                        .unwrap_or(((screen_min_x + screen_max_x) / 2, (screen_min_y + screen_max_y) / 2));
 
                                     // Initiate transfer (CLI-initiated, not keyboard)
                                     info!("IPC Switch: calling initiate_transfer");
-                                    match transfer_manager.initiate_transfer(dir, cursor_pos, screen_height, screen_width, false).await {
+                                    match transfer_manager.initiate_transfer(dir, cursor_pos, screen_min_x, screen_min_y, screen_max_x, screen_max_y, false).await {
                                         Ok(()) => {
                                             let machine_name = config.machines.neighbors
                                                 .iter()
@@ -1928,11 +2017,12 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
                                     match conn_result {
                                         Ok(mut conn) => {
-                                            // Send Hello
+                                            // Send Hello with direction for peer sync
                                             let hello = Message::Hello(HelloPayload {
                                                 protocol_version: PROTOCOL_VERSION,
                                                 machine_name,
                                                 capabilities: vec![],
+                                                my_direction_for_you: Some(direction),
                                             });
                                             if let Err(e) = conn.send(&hello).await {
                                                 tracing::error!("Reconnect: failed to send Hello: {}", e);
@@ -2013,6 +2103,27 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     needs_restart = true;
                                 }
 
+                                // Check for direction changes (requires restart for edge barriers)
+                                for new_neighbor in &new_config.machines.neighbors {
+                                    if let Some(old_neighbor) = config.machines.neighbors
+                                        .iter()
+                                        .find(|n| n.name == new_neighbor.name)
+                                    {
+                                        if old_neighbor.direction != new_neighbor.direction {
+                                            changes.push(format!(
+                                                "neighbor '{}' direction: {:?} -> {:?} (requires restart)",
+                                                new_neighbor.name, old_neighbor.direction, new_neighbor.direction
+                                            ));
+                                            needs_restart = true;
+                                        }
+                                    }
+                                }
+
+                                // Apply the new config (only if no restart needed)
+                                if !needs_restart {
+                                    config = new_config;
+                                }
+
                                 if changes.is_empty() {
                                     IpcResponse::Ok {
                                         message: "Config unchanged".to_string(),
@@ -2020,7 +2131,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 } else if needs_restart {
                                     IpcResponse::Ok {
                                         message: format!(
-                                            "Config changes detected (restart required):\n  - {}",
+                                            "Config saved (restart required to apply):\n  - {}",
                                             changes.join("\n  - ")
                                         ),
                                     }
@@ -2103,6 +2214,16 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                 };
 
                 let _ = response_tx.send(response);
+            }
+
+            // Handle restart signal from direction change
+            Some(reason) = restart_rx.recv() => {
+                info!("Restart required: {}", reason);
+                info!("Exiting to allow restart with updated config...");
+                accept_handle.abort();
+                // Exit with code 75 (EX_TEMPFAIL) to signal that we need to restart
+                // This allows systemd or the GUI to restart us
+                std::process::exit(75);
             }
 
             // Shutdown (Ctrl+C or IPC request)

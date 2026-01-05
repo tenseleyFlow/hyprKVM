@@ -54,6 +54,9 @@ pub struct HelloPayload {
     pub machine_name: String,
     /// Supported capabilities
     pub capabilities: Vec<String>,
+    /// Direction the sender has configured for the recipient (peer uses opposite)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub my_direction_for_you: Option<crate::Direction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
