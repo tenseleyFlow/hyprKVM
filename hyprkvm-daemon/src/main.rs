@@ -1090,6 +1090,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             None
                         };
 
+                        // Debug: Log when cursor is at Up/Down edge
+                        if matches!(at_edge, Some(Direction::Up) | Some(Direction::Down)) {
+                            let current_state = transfer_manager.state().await;
+                            tracing::debug!(
+                                "CURSOR at {:?} edge: pos=({}, {}), bounds=(0,0)-({}x{}), state={:?}, enabled_edges={:?}",
+                                at_edge, cx, cy, screen_width, screen_height, current_state, enabled_edges
+                            );
+                        }
+
                         // Check if we should trigger based on dwell time and movement
                         if let Some(edge_dir) = at_edge {
                             // Only care about edges with neighbors
@@ -1122,8 +1131,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                 if has_peer {
                                                     // Check if we're in ReceivedControl state from this direction
                                                     let current_state = transfer_manager.state().await;
-                                                    if let transfer::TransferState::ReceivedControl { from, .. } = current_state {
-                                                        if from == edge_dir {
+                                                    if let transfer::TransferState::ReceivedControl { from, .. } = &current_state {
+                                                        if *from == edge_dir {
                                                             info!(
                                                                 "CURSOR EDGE: {:?} at ({}, {}) - returning control",
                                                                 edge_dir, cx, cy
@@ -1133,7 +1142,17 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                             }
                                                             edge_dwell_start = None;
                                                             continue;
+                                                        } else {
+                                                            tracing::debug!(
+                                                                "CURSOR EDGE: {:?} - ReceivedControl from {:?}, not matching",
+                                                                edge_dir, from
+                                                            );
                                                         }
+                                                    } else {
+                                                        tracing::debug!(
+                                                            "CURSOR EDGE: {:?} - state is {:?}, not ReceivedControl",
+                                                            edge_dir, current_state
+                                                        );
                                                     }
 
                                                     // Check cooldown to prevent bounce-back
