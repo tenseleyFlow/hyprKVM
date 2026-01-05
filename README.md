@@ -200,10 +200,10 @@ Intercept workspace movement to trigger machine switching:
 
 ```ini
 # ~/.config/hypr/hyprland.conf
-bind = SUPER, Left,  exec, hyprkvm-ctl move left
-bind = SUPER, Right, exec, hyprkvm-ctl move right
-bind = SUPER, Up,    exec, hyprkvm-ctl move up
-bind = SUPER, Down,  exec, hyprkvm-ctl move down
+bind = SUPER, Left,  exec, hyprkvm move left
+bind = SUPER, Right, exec, hyprkvm move right
+bind = SUPER, Up,    exec, hyprkvm move up
+bind = SUPER, Down,  exec, hyprkvm move down
 ```
 
 ## Firewall
