@@ -872,13 +872,18 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 };
 
                                 // Check if there's another monitor in the requested direction
+                                // Use logical dimensions (physical / scale) since positions are logical
                                 let has_monitor_in_direction = monitors.iter().any(|m| {
                                     if m.id == focused_monitor.id { return false; }
+                                    let m_logical_w = (m.width as f32 / m.scale).round() as i32;
+                                    let m_logical_h = (m.height as f32 / m.scale).round() as i32;
+                                    let focused_logical_w = (focused_monitor.width as f32 / focused_monitor.scale).round() as i32;
+                                    let focused_logical_h = (focused_monitor.height as f32 / focused_monitor.scale).round() as i32;
                                     match direction {
-                                        Direction::Left => m.x + m.width as i32 <= focused_monitor.x,
-                                        Direction::Right => m.x >= focused_monitor.x + focused_monitor.width as i32,
-                                        Direction::Up => m.y + m.height as i32 <= focused_monitor.y,
-                                        Direction::Down => m.y >= focused_monitor.y + focused_monitor.height as i32,
+                                        Direction::Left => m.x + m_logical_w <= focused_monitor.x,
+                                        Direction::Right => m.x >= focused_monitor.x + focused_logical_w,
+                                        Direction::Up => m.y + m_logical_h <= focused_monitor.y,
+                                        Direction::Down => m.y >= focused_monitor.y + focused_logical_h,
                                     }
                                 });
 
@@ -1692,13 +1697,18 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             };
 
                             // Check if there's another monitor in the requested direction
+                            // Use logical dimensions (physical / scale) since positions are logical
                             let has_monitor_in_direction = monitors.iter().any(|m| {
                                 if m.id == focused_monitor.id { return false; }
+                                let m_logical_w = (m.width as f32 / m.scale).round() as i32;
+                                let m_logical_h = (m.height as f32 / m.scale).round() as i32;
+                                let focused_logical_w = (focused_monitor.width as f32 / focused_monitor.scale).round() as i32;
+                                let focused_logical_h = (focused_monitor.height as f32 / focused_monitor.scale).round() as i32;
                                 match direction {
-                                    Direction::Left => m.x + m.width as i32 <= focused_monitor.x,
-                                    Direction::Right => m.x >= focused_monitor.x + focused_monitor.width as i32,
-                                    Direction::Up => m.y + m.height as i32 <= focused_monitor.y,
-                                    Direction::Down => m.y >= focused_monitor.y + focused_monitor.height as i32,
+                                    Direction::Left => m.x + m_logical_w <= focused_monitor.x,
+                                    Direction::Right => m.x >= focused_monitor.x + focused_logical_w,
+                                    Direction::Up => m.y + m_logical_h <= focused_monitor.y,
+                                    Direction::Down => m.y >= focused_monitor.y + focused_logical_h,
                                 }
                             });
 
