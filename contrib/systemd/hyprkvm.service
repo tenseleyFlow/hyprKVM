@@ -1,0 +1,25 @@
+[Unit]
+Description=HyprKVM Daemon - Hyprland-native software KVM switch
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Adjust the path below to match your installation:
+#   - If installed via cargo: %h/.cargo/bin/hyprkvm
+#   - If built from source: /path/to/hyprKVM/target/release/hyprkvm
+ExecStart=%h/.cargo/bin/hyprkvm daemon
+Restart=on-failure
+RestartSec=1
+
+# Exit code 75 (EX_TEMPFAIL) triggers restart for direction changes
+# When a peer notifies us of a direction change, the daemon updates
+# its config and exits with code 75 so systemd restarts it with
+# the new edge barrier configuration.
+RestartForceExitStatus=75
+
+# Wayland environment - adjust WAYLAND_DISPLAY if needed
+Environment=WAYLAND_DISPLAY=wayland-1
+
+[Install]
+WantedBy=graphical-session.target
