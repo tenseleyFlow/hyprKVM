@@ -322,7 +322,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
 
     // Cooldown after control returns to prevent immediate bounce-back
     let mut last_control_return: Option<std::time::Instant> = None;
-    const CONTROL_RETURN_COOLDOWN_MS: u64 = 500; // 500ms cooldown after control returns
+    const CONTROL_RETURN_COOLDOWN_MS: u64 = 1000; // 1000ms cooldown after control returns (prevents bounce-back)
 
     // Connection storage: direction -> peer connection
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
@@ -1023,6 +1023,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 );
                                 if let Err(e) = transfer_manager.return_control().await {
                                     tracing::warn!("Failed to return control: {}", e);
+                                } else {
+                                    // Set cooldown to prevent immediate re-transfer
+                                    last_control_return = Some(std::time::Instant::now());
                                 }
                                 continue;
                             }
@@ -1139,6 +1142,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                             );
                                                             if let Err(e) = transfer_manager.return_control().await {
                                                                 tracing::warn!("Failed to return control: {}", e);
+                                                            } else {
+                                                                // Set cooldown to prevent immediate re-transfer
+                                                                last_control_return = Some(std::time::Instant::now());
                                                             }
                                                             edge_dwell_start = None;
                                                             continue;
@@ -1753,6 +1759,8 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         tracing::warn!("Failed to return control: {}", e);
                                         IpcResponse::Error { message: format!("Return failed: {}", e) }
                                     } else {
+                                        // Set cooldown to prevent immediate re-transfer (bounce-back)
+                                        last_control_return = Some(std::time::Instant::now());
                                         IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
                                     }
                                 } else {
