@@ -332,7 +332,7 @@ impl EdgeCaptureState {
 
     /// Find the output(s) at the edge of the screen for a given direction
     /// For Left/Right: returns single monitor at the edge
-    /// For Up/Down: returns ALL monitors at the top/bottom edge (for horizontal layouts)
+    /// For Up/Down: returns ALL monitors (in horizontal layouts, all monitors have exposed top/bottom edges)
     fn find_edge_outputs(&self, direction: Direction) -> Vec<OutputInfo> {
         if self.outputs.is_empty() {
             return vec![];
@@ -348,14 +348,26 @@ impl EdgeCaptureState {
                 self.outputs.iter().max_by_key(|o| o.x + o.width as i32).cloned().into_iter().collect()
             }
             Direction::Up => {
-                // Find ALL outputs at minimum y (all topmost monitors)
-                let min_y = self.outputs.iter().map(|o| o.y).min().unwrap_or(0);
-                self.outputs.iter().filter(|o| o.y == min_y).cloned().collect()
+                // For horizontal layouts: all monitors with nothing above them
+                // A monitor has nothing above if no other monitor overlaps its x range at a lower y
+                self.outputs.iter().filter(|o| {
+                    !self.outputs.iter().any(|other| {
+                        other.y + other.height as i32 <= o.y && // other is above
+                        other.x < o.x + o.width as i32 && // overlaps in x
+                        other.x + other.width as i32 > o.x
+                    })
+                }).cloned().collect()
             }
             Direction::Down => {
-                // Find ALL outputs at maximum y + height (all bottommost monitors)
-                let max_bottom = self.outputs.iter().map(|o| o.y + o.height as i32).max().unwrap_or(0);
-                self.outputs.iter().filter(|o| o.y + o.height as i32 == max_bottom).cloned().collect()
+                // For horizontal layouts: all monitors with nothing below them
+                // A monitor has nothing below if no other monitor overlaps its x range at a higher y
+                self.outputs.iter().filter(|o| {
+                    !self.outputs.iter().any(|other| {
+                        other.y >= o.y + o.height as i32 && // other is below
+                        other.x < o.x + o.width as i32 && // overlaps in x
+                        other.x + other.width as i32 > o.x
+                    })
+                }).cloned().collect()
             }
         }
     }
