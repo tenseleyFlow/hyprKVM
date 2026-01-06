@@ -474,8 +474,23 @@ fn run_evdev_grabber(
                     // is pressed, since it never saw the original key-down (it was grabbed).
                     // CRITICAL: We must keep the virtual device alive until Super is released,
                     // otherwise the kernel will auto-send key-up when the device is destroyed.
-                    if recovery_hotkey_sent && super_held {
-                        tracing::info!("RECOVERY: Super still held, entering PostRecovery to maintain synthetic key-down");
+
+                    // Re-query physical key state to ensure Super is actually held
+                    // (we may have broken out of the event loop before processing Super release)
+                    let mut super_physically_held = false;
+                    for dev in devices.values() {
+                        if let Ok(key_state) = dev.get_key_state() {
+                            if key_state.contains(evdev::Key::new(KEY_LEFTMETA))
+                                || key_state.contains(evdev::Key::new(KEY_RIGHTMETA))
+                            {
+                                super_physically_held = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if recovery_hotkey_sent && super_physically_held {
+                        tracing::info!("RECOVERY: Super physically held, entering PostRecovery to maintain synthetic key-down");
 
                         // Create virtual keyboard and send Super key-down
                         match create_synthetic_keyboard_with_super_down() {
@@ -493,6 +508,9 @@ fn run_evdev_grabber(
                         }
                     } else {
                         // Super already released or no hotkey detected, clean up normally
+                        if recovery_hotkey_sent && !super_physically_held {
+                            tracing::info!("RECOVERY: Super was released before PostRecovery, skipping synthetic keyboard");
+                        }
                         devices.clear();
                         state = State::Idle;
                     }
