@@ -332,8 +332,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
     const EDGE_DWELL_MS: u64 = 50; // How long cursor must be at edge to trigger
 
     // Cooldown after control returns to prevent immediate bounce-back
-    let mut last_control_return: Option<std::time::Instant> = None;
-    const CONTROL_RETURN_COOLDOWN_MS: u64 = 1000; // 1000ms cooldown after control returns (prevents bounce-back)
+    // Stores (timestamp, return_direction) - the direction is the arrow key the user pressed to return
+    let mut last_control_return: Option<(std::time::Instant, Direction)> = None;
+    const CONTROL_RETURN_COOLDOWN_MS: u64 = 300; // 300ms cooldown - spurious keypresses happen within ~100-400ms
 
     // Connection storage: direction -> peer connection
     let peers: Arc<RwLock<HashMap<Direction, network::FramedConnection>>> =
@@ -991,7 +992,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         // Set cooldown to prevent the IPC Move callback from initiating transfer
                                         // (Hyprland fires IPC Move after movefocus, which would see at_edge=true
                                         // after we moved to the edge window)
-                                        last_control_return = Some(std::time::Instant::now());
+                                        last_control_return = Some((std::time::Instant::now(), direction));
                                     }
                                     Err(e) => tracing::error!("  RECOVERY movefocus failed: {}", e),
                                 }
@@ -1053,15 +1054,15 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     tracing::warn!("Failed to return control: {}", e);
                                 } else {
                                     // Set cooldown to prevent immediate re-transfer
-                                    last_control_return = Some(std::time::Instant::now());
+                                    last_control_return = Some((std::time::Instant::now(), direction));
                                 }
                                 continue;
                             }
                         }
 
-                        // Check cooldown to prevent bounce-back loops
-                        if let Some(last_return) = last_control_return {
-                            if last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128 {
+                        // Check cooldown to prevent bounce-back loops (only for matching direction)
+                        if let Some((last_return, cooldown_dir)) = last_control_return {
+                            if cooldown_dir == direction && last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128 {
                                 tracing::debug!("EDGE: {:?} - in cooldown, ignoring", direction);
                                 continue;
                             }
@@ -1212,7 +1213,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                                 tracing::warn!("Failed to return control: {}", e);
                                                             } else {
                                                                 // Set cooldown to prevent immediate re-transfer
-                                                                last_control_return = Some(std::time::Instant::now());
+                                                                last_control_return = Some((std::time::Instant::now(), edge_dir));
                                                             }
                                                             edge_dwell_start = None;
                                                             continue;
@@ -1229,9 +1230,9 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                         );
                                                     }
 
-                                                    // Check cooldown to prevent bounce-back
-                                                    if let Some(last_return) = last_control_return {
-                                                        if last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128 {
+                                                    // Check cooldown to prevent bounce-back (only for matching direction)
+                                                    if let Some((last_return, cooldown_dir)) = last_control_return {
+                                                        if cooldown_dir == edge_dir && last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128 {
                                                             tracing::debug!("CURSOR EDGE: {:?} - in cooldown", edge_dir);
                                                             edge_dwell_start = None;
                                                             continue;
@@ -1370,8 +1371,10 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         }
                                         // Set cooldown to prevent bounce-back loop
                                         // When we receive Leave, control is returning to us
-                                        last_control_return = Some(std::time::Instant::now());
-                                        tracing::debug!("Set control return cooldown");
+                                        // The return direction is opposite of peer direction (user pressed Down to return from Up peer)
+                                        let return_direction = direction.opposite();
+                                        last_control_return = Some((std::time::Instant::now(), return_direction));
+                                        tracing::debug!("Set control return cooldown for direction {:?}", return_direction);
                                     }
                                     Message::LeaveAck => {
                                         info!("Received LeaveAck");
@@ -1660,6 +1663,19 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 emu.keyboard.reset_all_keys();
                             }
                         }
+
+                        // CRITICAL: Set cooldown after receiving Leave from peer
+                        // When peer sends Leave (e.g., user pressed Super+Down on cachyos to return),
+                        // the Down key might still be held when we release the grab. Libinput sees
+                        // Super (still held) + Down = fires IPC Move Down, causing unwanted navigation.
+                        // This cooldown prevents that specific direction from triggering movefocus.
+                        if let Some(capture_dir) = was_capturing_direction {
+                            // Return direction is opposite of capture direction
+                            // e.g., if we were capturing to Up, user pressed Down to return
+                            let return_direction = capture_dir.opposite();
+                            last_control_return = Some((std::time::Instant::now(), return_direction));
+                            tracing::info!("Set cooldown after StopCapture for direction {:?} (peer-initiated return)", return_direction);
+                        }
                     }
                     transfer::TransferEvent::StartInjection { from } => {
                         info!("Starting input injection from {:?}", from);
@@ -1747,14 +1763,16 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let current_state = transfer_manager.state().await;
                         info!("IPC Move {:?}: state={:?}", direction, current_state);
 
-                        // Early exit: if in ReceivedControl and within cooldown, ignore
+                        // Early exit: if in ReceivedControl and within cooldown for the ENTRY direction, ignore
                         // (prevents the Super+Arrow keypress that triggered the transfer from
                         // causing a double navigation on the receiving machine)
-                        if let transfer::TransferState::ReceivedControl { entered_at, .. } = &current_state {
-                            const RECEIVED_CONTROL_IPC_COOLDOWN_MS: u128 = 1000;
+                        // Only block the direction that would return to source, not all directions
+                        if let transfer::TransferState::ReceivedControl { entered_at, from, .. } = &current_state {
+                            const RECEIVED_CONTROL_IPC_COOLDOWN_MS: u128 = 300;
                             let time_in_state = entered_at.elapsed().as_millis();
-                            if time_in_state < RECEIVED_CONTROL_IPC_COOLDOWN_MS {
-                                tracing::info!("IPC Move {:?}: in ReceivedControl cooldown ({}ms), ignoring", direction, time_in_state);
+                            // Only block if this is the same direction we received from (would return to source)
+                            if *from == direction && time_in_state < RECEIVED_CONTROL_IPC_COOLDOWN_MS {
+                                tracing::info!("IPC Move {:?}: in ReceivedControl cooldown ({}ms), ignoring (same as entry direction)", direction, time_in_state);
                                 response_tx.send(IpcResponse::Ok { message: "in cooldown".to_string() }).ok();
                                 continue;
                             }
@@ -1909,7 +1927,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                         IpcResponse::Error { message: format!("Return failed: {}", e) }
                                     } else {
                                         // Set cooldown to prevent immediate re-transfer (bounce-back)
-                                        last_control_return = Some(std::time::Instant::now());
+                                        last_control_return = Some((std::time::Instant::now(), direction));
                                         IpcResponse::Transferred { to_machine: neighbor_name.unwrap() }
                                     }
                                 } else {
@@ -1938,25 +1956,20 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                     }
                                 }
                             } else {
-                                // Not in ReceivedControl - check cooldown first
-                                let in_cooldown = if let Some(last_return) = last_control_return {
-                                    last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128
+                                // Not in ReceivedControl - check cooldown first (only for matching direction)
+                                let in_cooldown = if let Some((last_return, cooldown_dir)) = last_control_return {
+                                    cooldown_dir == direction && last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128
                                 } else {
                                     false
                                 };
 
                                 if in_cooldown {
-                                    tracing::info!("IPC Move {:?}: in cooldown, doing local movefocus", direction);
-                                    let hypr_dir = match direction {
-                                        Direction::Left => "l",
-                                        Direction::Right => "r",
-                                        Direction::Up => "u",
-                                        Direction::Down => "d",
-                                    };
-                                    match hypr_client.dispatch("movefocus", hypr_dir).await {
-                                        Ok(_) => IpcResponse::Ok { message: "movefocus (cooldown)".to_string() },
-                                        Err(e) => IpcResponse::Error { message: format!("movefocus failed: {}", e) },
-                                    }
+                                    // At edge with peer but in cooldown - ignore entirely
+                                    // Don't do movefocus because Hyprland may wrap at edge causing bounce-back
+                                    tracing::info!("IPC Move {:?}: at edge, in cooldown, ignoring (prevents wrap bounce-back)", direction);
+                                    // Clear cooldown after blocking once, so subsequent legitimate presses work
+                                    last_control_return = None;
+                                    IpcResponse::Ok { message: "in cooldown at edge".to_string() }
                                 } else if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                     IpcResponse::Error { message: "Barrier enabled".to_string() }
                                 } else {
@@ -1981,19 +1994,35 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 }
                             }
                         } else {
-                            // Either not at edge, or at edge but no peer - do local movefocus
-                            let hypr_dir = match direction {
-                                Direction::Left => "l",
-                                Direction::Right => "r",
-                                Direction::Up => "u",
-                                Direction::Down => "d",
+                            // Either not at edge, or at edge but no peer
+                            // Check cooldown to prevent spurious navigation after peer return
+                            // (e.g., user pressed Down on cachyos to return, libinput still sees Down held)
+                            let in_cooldown = if let Some((last_return, cooldown_dir)) = last_control_return {
+                                cooldown_dir == direction && last_return.elapsed().as_millis() < CONTROL_RETURN_COOLDOWN_MS as u128
+                            } else {
+                                false
                             };
-                            info!("IPC Move {:?}: doing local movefocus {}", direction, hypr_dir);
-                            match hypr_client.dispatch("movefocus", hypr_dir).await {
-                                Ok(()) => info!("  movefocus succeeded"),
-                                Err(e) => tracing::error!("  movefocus failed: {}", e),
+
+                            if in_cooldown {
+                                tracing::info!("IPC Move {:?}: in cooldown (not at edge), ignoring spurious keypress", direction);
+                                // Clear cooldown after blocking once, so subsequent legitimate presses work
+                                last_control_return = None;
+                                IpcResponse::Ok { message: "in cooldown".to_string() }
+                            } else {
+                                // Do local movefocus
+                                let hypr_dir = match direction {
+                                    Direction::Left => "l",
+                                    Direction::Right => "r",
+                                    Direction::Up => "u",
+                                    Direction::Down => "d",
+                                };
+                                info!("IPC Move {:?}: doing local movefocus {}", direction, hypr_dir);
+                                match hypr_client.dispatch("movefocus", hypr_dir).await {
+                                    Ok(()) => info!("  movefocus succeeded"),
+                                    Err(e) => tracing::error!("  movefocus failed: {}", e),
+                                }
+                                IpcResponse::DoLocalMove
                             }
-                            IpcResponse::DoLocalMove
                         }
                     } // end of else block for Initiating check
                     }
