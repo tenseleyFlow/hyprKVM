@@ -1741,6 +1741,27 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let current_state = transfer_manager.state().await;
                         info!("IPC Move {:?}: state={:?}", direction, current_state);
 
+                        // If we're already initiating a transfer in this direction, skip entirely
+                        // (prevents double-action when both RECOVERY hotkey and IPC Move fire)
+                        if let transfer::TransferState::Initiating { target, .. } = &current_state {
+                            if *target == direction {
+                                tracing::info!("IPC Move {:?}: already initiating transfer, skipping", direction);
+                                IpcResponse::Ok { message: "transfer already initiating".to_string() }
+                            } else {
+                                // Different direction - this shouldn't happen normally, but do movefocus
+                                let hypr_dir = match direction {
+                                    Direction::Left => "l",
+                                    Direction::Right => "r",
+                                    Direction::Up => "u",
+                                    Direction::Down => "d",
+                                };
+                                match hypr_client.dispatch("movefocus", hypr_dir).await {
+                                    Ok(_) => IpcResponse::Ok { message: "movefocus".to_string() },
+                                    Err(e) => IpcResponse::Error { message: format!("movefocus failed: {}", e) },
+                                }
+                            }
+                        } else {
+
                         // For keyboard navigation, check if we're at the absolute edge:
                         // 1. On edge monitor (no monitor in that direction)
                         // 2. On edge window of that monitor (no window further in that direction)
@@ -1955,6 +1976,7 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             }
                             IpcResponse::DoLocalMove
                         }
+                    } // end of else block for Initiating check
                     }
                     IpcRequest::Status => {
                         let state = format!("{:?}", transfer_manager.state().await);
