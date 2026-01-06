@@ -1741,6 +1741,19 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                         let current_state = transfer_manager.state().await;
                         info!("IPC Move {:?}: state={:?}", direction, current_state);
 
+                        // Early exit: if in ReceivedControl and within cooldown, ignore
+                        // (prevents the Super+Arrow keypress that triggered the transfer from
+                        // causing a double navigation on the receiving machine)
+                        if let transfer::TransferState::ReceivedControl { entered_at, .. } = &current_state {
+                            const RECEIVED_CONTROL_IPC_COOLDOWN_MS: u128 = 1000;
+                            let time_in_state = entered_at.elapsed().as_millis();
+                            if time_in_state < RECEIVED_CONTROL_IPC_COOLDOWN_MS {
+                                tracing::info!("IPC Move {:?}: in ReceivedControl cooldown ({}ms), ignoring", direction, time_in_state);
+                                response_tx.send(IpcResponse::Ok { message: "in cooldown".to_string() }).ok();
+                                continue;
+                            }
+                        }
+
                         // If we're already initiating a transfer in this direction, skip entirely
                         // (prevents double-action when both RECOVERY hotkey and IPC Move fire)
                         if let transfer::TransferState::Initiating { target, .. } = &current_state {
