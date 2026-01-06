@@ -986,7 +986,13 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                 };
                                 info!("RECOVERY HOTKEY: Not at edge, doing movefocus {} (libinput dropped the keypress)", hypr_dir);
                                 match hypr_client.dispatch("movefocus", hypr_dir).await {
-                                    Ok(()) => info!("  RECOVERY movefocus succeeded"),
+                                    Ok(()) => {
+                                        info!("  RECOVERY movefocus succeeded");
+                                        // Set cooldown to prevent the IPC Move callback from initiating transfer
+                                        // (Hyprland fires IPC Move after movefocus, which would see at_edge=true
+                                        // after we moved to the edge window)
+                                        last_control_return = Some(std::time::Instant::now());
+                                    }
                                     Err(e) => tracing::error!("  RECOVERY movefocus failed: {}", e),
                                 }
                             } else {
