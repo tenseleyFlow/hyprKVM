@@ -354,30 +354,33 @@ impl TransferManager {
         let screen_width = (screen_max_x - screen_min_x) as f64;
         let screen_height = (screen_max_y - screen_min_y) as f64;
 
+        // Offset from edge to prevent immediate re-triggering of edge detection
+        const EDGE_INSET: i32 = 30;
+
         let cursor_pos = match payload.cursor_pos {
             CursorEntryPos::EdgeRelative(rel) => {
                 // from_direction indicates which edge the cursor enters from
                 // e.g., from_direction=Left means cursor enters at our left edge
                 match from_direction {
                     Direction::Left => {
-                        // Cursor enters from left edge
+                        // Cursor enters from left edge - position slightly inward
                         let y = screen_min_y + (rel * screen_height) as i32;
-                        (screen_min_x, y)
+                        (screen_min_x + EDGE_INSET, y)
                     }
                     Direction::Right => {
-                        // Cursor enters from right edge
+                        // Cursor enters from right edge - position slightly inward
                         let y = screen_min_y + (rel * screen_height) as i32;
-                        (screen_max_x - 1, y)
+                        (screen_max_x - EDGE_INSET, y)
                     }
                     Direction::Up => {
-                        // Cursor enters from top edge
+                        // Cursor enters from top edge - position slightly inward
                         let x = screen_min_x + (rel * screen_width) as i32;
-                        (x, screen_min_y)
+                        (x, screen_min_y + EDGE_INSET)
                     }
                     Direction::Down => {
-                        // Cursor enters from bottom edge
+                        // Cursor enters from bottom edge - position slightly inward
                         let x = screen_min_x + (rel * screen_width) as i32;
-                        (x, screen_max_y - 1)
+                        (x, screen_max_y - EDGE_INSET)
                     }
                 }
             }
