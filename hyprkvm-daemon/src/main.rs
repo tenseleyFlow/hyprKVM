@@ -1192,7 +1192,21 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                 if has_peer {
                                                     // Check if we're in ReceivedControl state from this direction
                                                     let current_state = transfer_manager.state().await;
-                                                    if let transfer::TransferState::ReceivedControl { from, .. } = &current_state {
+                                                    if let transfer::TransferState::ReceivedControl { from, entered_at, .. } = &current_state {
+                                                        // Add cooldown after entering ReceivedControl to prevent immediate return
+                                                        // (cursor warp may not have taken effect yet, or stale position from polling)
+                                                        const RECEIVED_CONTROL_COOLDOWN_MS: u128 = 500;
+                                                        let time_in_state = entered_at.elapsed().as_millis();
+
+                                                        if time_in_state < RECEIVED_CONTROL_COOLDOWN_MS {
+                                                            tracing::debug!(
+                                                                "CURSOR EDGE: {:?} - just entered ReceivedControl {}ms ago, waiting",
+                                                                edge_dir, time_in_state
+                                                            );
+                                                            edge_dwell_start = None;
+                                                            continue;
+                                                        }
+
                                                         if *from == edge_dir {
                                                             info!(
                                                                 "CURSOR EDGE: {:?} at ({}, {}) - returning control",
