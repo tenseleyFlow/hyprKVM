@@ -30,6 +30,8 @@ pub struct EvdevGrabber {
     recovery_active: Arc<AtomicU64>,
     /// The direction to watch for in recovery mode (encoded as u8: 1=Up, 2=Down, 3=Left, 4=Right, 0=none)
     recovery_direction: Arc<AtomicU64>,
+    /// Whether this machine has physical input devices to grab
+    has_devices: bool,
     event_rx: mpsc::Receiver<GrabEvent>,
     _thread: thread::JoinHandle<()>,
 }
@@ -37,6 +39,10 @@ pub struct EvdevGrabber {
 impl EvdevGrabber {
     /// Create a new evdev grabber
     pub fn new() -> Result<Self, EvdevGrabError> {
+        // Check if we have devices before spawning the thread
+        let device_paths = find_input_devices();
+        let has_devices = !device_paths.is_empty();
+
         let active = Arc::new(AtomicBool::new(false));
         let active_clone = active.clone();
         let recovery_active = Arc::new(AtomicU64::new(0));
@@ -59,6 +65,7 @@ impl EvdevGrabber {
             active,
             recovery_active,
             recovery_direction,
+            has_devices,
             event_rx,
             _thread: thread,
         })
@@ -99,6 +106,12 @@ impl EvdevGrabber {
     /// Check if currently grabbing
     pub fn is_active(&self) -> bool {
         self.active.load(Ordering::SeqCst)
+    }
+
+    /// Check if this machine has physical input devices
+    /// Machines without devices can only receive control (and relay), not initiate from Local
+    pub fn has_devices(&self) -> bool {
+        self.has_devices
     }
 
     /// Try to receive a grab event (non-blocking)

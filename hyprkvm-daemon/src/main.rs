@@ -1071,9 +1071,20 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                             }
                         }
 
+                        // Re-check state for the has_devices check
+                        let current_state = transfer_manager.state().await;
+
                         if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                             info!(
                                 "EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
+                                direction,
+                                cursor_pos.0,
+                                cursor_pos.1
+                            );
+                        } else if !input_grabber.has_devices() && current_state.is_local() {
+                            // No devices and in Local state - can't initiate
+                            tracing::debug!(
+                                "EDGE: {:?} at ({}, {}) - no devices, can't initiate from Local",
                                 direction,
                                 cursor_pos.0,
                                 cursor_pos.1
@@ -1220,6 +1231,13 @@ async fn run_daemon(config_path: &std::path::Path) -> anyhow::Result<()> {
                                                     if barrier_enabled.load(std::sync::atomic::Ordering::SeqCst) {
                                                         info!(
                                                             "CURSOR EDGE: {:?} at ({}, {}) - barrier enabled, blocking",
+                                                            edge_dir, cx, cy
+                                                        );
+                                                    } else if !input_grabber.has_devices() && current_state.is_local() {
+                                                        // No devices and in Local state - can't initiate (no input to grab)
+                                                        // Note: if in ReceivedControl, we can still relay
+                                                        tracing::debug!(
+                                                            "CURSOR EDGE: {:?} at ({}, {}) - no devices, can't initiate from Local",
                                                             edge_dir, cx, cy
                                                         );
                                                     } else {
